@@ -256,7 +256,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     async def _fetch_nina_alerts(self, ars: str) -> list[dict]:
         alerts: list[dict] = []
         if ars:
-            dashboard = await fetch_json(self.hass, f"{NINA_BASE_URL}/dashboard/{ars}.json")
+            dashboard = await self._fetch_nina_dashboard(ars)
             if isinstance(dashboard, list):
                 for item in dashboard:
                     if not isinstance(item, dict):
@@ -312,6 +312,25 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 alert["latitude"] = lat
                 alert["longitude"] = lon
         return resolved
+
+    async def _fetch_nina_dashboard(self, ars: str):
+        """Fetch a dashboard, retrying with an 8-digit AGS fallback when needed."""
+        candidates = [ars]
+        normalized = ars.strip()
+        if len(normalized) == 12 and normalized[:8] not in candidates:
+            candidates.append(normalized[:8])
+
+        last_error: Exception | None = None
+        for candidate in candidates:
+            try:
+                return await fetch_json(self.hass, f"{NINA_BASE_URL}/dashboard/{candidate}.json")
+            except Exception as err:  # noqa: BLE001
+                last_error = err
+                _LOGGER.warning("NINA dashboard lookup failed for %s: %s", candidate, err)
+
+        if last_error is not None:
+            raise last_error
+        return []
 
     def _dedupe_items(self, items: Iterable[FeedItem]) -> list[FeedItem]:
         seen: set[str] = set()

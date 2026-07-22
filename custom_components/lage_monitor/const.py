@@ -47,7 +47,7 @@ GERMAN_NEWS_FEEDS: dict[str, str] = {
 
 PRESSEPORTAL_FEEDS: dict[str, str] = {
     "presseportal_blaulicht": "https://www.presseportal.de/rss/polizei/typ/1.rss2",
-    "presseportal_panorama": "https://www.presseportal.de/rss/panorama",
+    "presseportal_storys": "https://www.presseportal.de/rss/presseportal.rss2?langid=1",
 }
 
 POLICE_COUNT_MODE_ALL = "all"
