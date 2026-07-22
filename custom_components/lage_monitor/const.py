@@ -14,6 +14,10 @@ CONF_INCLUDE_PRESS = "include_press"
 CONF_INCLUDE_NEWS = "include_news"
 CONF_NEWS_LIMIT = "news_limit"
 CONF_POLICE_COUNT_MODE = "police_count_mode"
+CONF_FOCUS_MODE = "focus_mode"
+CONF_LOCAL_KEYWORDS = "local_keywords"
+CONF_CUSTOM_PRESS_FEEDS = "custom_press_feeds"
+CONF_ALERT_RADIUS_KM = "alert_radius_km"
 
 DEFAULT_SCAN_INTERVAL = 300
 DEFAULT_NINA_ARS = ""
@@ -22,6 +26,10 @@ DEFAULT_INCLUDE_PRESS = True
 DEFAULT_INCLUDE_NEWS = True
 DEFAULT_NEWS_LIMIT = 20
 DEFAULT_POLICE_COUNT_MODE = "all"
+DEFAULT_FOCUS_MODE = "germany"
+DEFAULT_LOCAL_KEYWORDS = ""
+DEFAULT_CUSTOM_PRESS_FEEDS = ""
+DEFAULT_ALERT_RADIUS_KM = 50
 
 ATTR_ALERTS = "alerts"
 ATTR_HEADLINES = "headlines"
@@ -52,6 +60,8 @@ PRESSEPORTAL_FEEDS: dict[str, str] = {
 
 POLICE_COUNT_MODE_ALL = "all"
 POLICE_COUNT_MODE_RELEVANT = "relevant"
+FOCUS_MODE_GERMANY = "germany"
+FOCUS_MODE_LOCAL = "local"
 
 KEYWORD_WEIGHTS: dict[str, int] = {
     "anschlag": 12,

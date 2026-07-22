@@ -8,19 +8,26 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers import selector
 
 from .const import (
+    CONF_ALERT_RADIUS_KM,
+    CONF_CUSTOM_PRESS_FEEDS,
+    CONF_FOCUS_MODE,
     CONF_INCLUDE_NEWS,
     CONF_INCLUDE_POLICE,
     CONF_INCLUDE_PRESS,
+    CONF_LOCAL_KEYWORDS,
     CONF_NEWS_LIMIT,
     CONF_NINA_ARS,
     CONF_POLICE_COUNT_MODE,
     CONF_SCAN_INTERVAL,
+    DEFAULT_ALERT_RADIUS_KM,
+    DEFAULT_CUSTOM_PRESS_FEEDS,
+    DEFAULT_FOCUS_MODE,
     DEFAULT_INCLUDE_NEWS,
     DEFAULT_INCLUDE_POLICE,
     DEFAULT_INCLUDE_PRESS,
+    DEFAULT_LOCAL_KEYWORDS,
     DEFAULT_NEWS_LIMIT,
     DEFAULT_NINA_ARS,
     DEFAULT_POLICE_COUNT_MODE,
@@ -53,16 +60,33 @@ def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Optional(
                 CONF_POLICE_COUNT_MODE,
                 default=defaults.get(CONF_POLICE_COUNT_MODE, DEFAULT_POLICE_COUNT_MODE),
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                    options=[
-                        selector.SelectOptionDict(value="all", label="Alle Blaulichtmeldungen"),
-                        selector.SelectOptionDict(value="relevant", label="Nur relevante Meldungen"),
-                    ],
-                    translation_key=CONF_POLICE_COUNT_MODE,
-                )
+            ): vol.In(
+                {
+                    "all": "Alle Blaulichtmeldungen",
+                    "relevant": "Nur relevante Meldungen",
+                }
             ),
+            vol.Optional(
+                CONF_FOCUS_MODE,
+                default=defaults.get(CONF_FOCUS_MODE, DEFAULT_FOCUS_MODE),
+            ): vol.In(
+                {
+                    "germany": "Deutschlandweit",
+                    "local": "Standort / Landkreis / Orte",
+                }
+            ),
+            vol.Optional(
+                CONF_LOCAL_KEYWORDS,
+                default=defaults.get(CONF_LOCAL_KEYWORDS, DEFAULT_LOCAL_KEYWORDS),
+            ): str,
+            vol.Optional(
+                CONF_CUSTOM_PRESS_FEEDS,
+                default=defaults.get(CONF_CUSTOM_PRESS_FEEDS, DEFAULT_CUSTOM_PRESS_FEEDS),
+            ): str,
+            vol.Optional(
+                CONF_ALERT_RADIUS_KM,
+                default=defaults.get(CONF_ALERT_RADIUS_KM, DEFAULT_ALERT_RADIUS_KM),
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=300)),
             vol.Optional(
                 CONF_SCAN_INTERVAL,
                 default=defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
@@ -91,12 +115,12 @@ class LageMonitorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return LageMonitorOptionsFlow(config_entry)
 
 
-class LageMonitorOptionsFlow(config_entries.OptionsFlowWithReload):
+class LageMonitorOptionsFlow(config_entries.OptionsFlow):
     """Handle Lage Monitor options."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize the options flow."""
-        super().__init__(config_entry)
+        self.config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Manage the options."""

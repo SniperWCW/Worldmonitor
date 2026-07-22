@@ -264,14 +264,14 @@ class LageMonitorCardEditor extends HTMLElement {
       <div class="editor">
         <div class="editor-section">
           <div class="editor-title">Allgemein</div>
-          <div class="editor-grid">
+          <div class="editor-grid single">
             ${this._field("title", "Titel", config.title)}
             ${this._field("limit", "Anzahl Ereignisse", config.limit, "number")}
           </div>
         </div>
         <div class="editor-section">
           <div class="editor-title">Karte</div>
-          <div class="editor-grid">
+          <div class="editor-grid single">
             ${this._field("zoom", "Karten-Zoom", config.zoom, "number")}
             ${this._field("map_height", "Kartenhoehe", config.map_height, "number")}
           </div>
@@ -451,13 +451,13 @@ style.textContent = `
   }
   .editor {
     display: grid;
-    gap: 16px;
+    gap: 12px;
     padding: 8px 0 16px;
   }
   .editor-section {
     border: 1px solid var(--divider-color);
     border-radius: 16px;
-    padding: 14px;
+    padding: 12px;
     background: var(--card-background-color);
   }
   .editor-title {
@@ -473,14 +473,14 @@ style.textContent = `
   .editor-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    gap: 10px;
   }
   .editor-grid.single {
     grid-template-columns: 1fr;
   }
   .editor-row {
     display: grid;
-    gap: 6px;
+    gap: 4px;
   }
   .editor-label {
     font-size: 0.9rem;

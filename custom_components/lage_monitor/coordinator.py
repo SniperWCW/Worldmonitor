@@ -7,36 +7,37 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 import logging
+import math
 import re
 from urllib.parse import quote
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
-    ATTR_ALERTS,
-    ATTR_HEADLINES,
-    ATTR_LAST_UPDATE,
-    ATTR_MAP_MARKERS,
-    ATTR_MILITARY_ITEMS,
-    ATTR_SCORE_BREAKDOWN,
-    ATTR_SOURCES,
-    ATTR_TOP_KEYWORDS,
+    CONF_ALERT_RADIUS_KM,
+    CONF_CUSTOM_PRESS_FEEDS,
+    CONF_FOCUS_MODE,
     CONF_INCLUDE_NEWS,
     CONF_INCLUDE_POLICE,
     CONF_INCLUDE_PRESS,
+    CONF_LOCAL_KEYWORDS,
     CONF_NEWS_LIMIT,
     CONF_NINA_ARS,
     CONF_POLICE_COUNT_MODE,
     CONF_SCAN_INTERVAL,
+    DEFAULT_ALERT_RADIUS_KM,
+    DEFAULT_CUSTOM_PRESS_FEEDS,
+    DEFAULT_FOCUS_MODE,
+    DEFAULT_LOCAL_KEYWORDS,
     DEFAULT_POLICE_COUNT_MODE,
+    FOCUS_MODE_LOCAL,
     GERMAN_NEWS_FEEDS,
     KEYWORD_WEIGHTS,
     MILITARY_KEYWORDS,
     NINA_BASE_URL,
     POLICE_COUNT_MODE_ALL,
-    POLICE_COUNT_MODE_RELEVANT,
     PRESSEPORTAL_FEEDS,
 )
 from .feed import FeedItem, fetch_feed, fetch_json, iso_timestamp
@@ -74,7 +75,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
-        interval = timedelta(seconds=entry.options.get(CONF_SCAN_INTERVAL, entry.data[CONF_SCAN_INTERVAL]))
+        interval = timedelta(
+            seconds=entry.options.get(CONF_SCAN_INTERVAL, entry.data[CONF_SCAN_INTERVAL])
+        )
         super().__init__(
             hass,
             _LOGGER,
@@ -96,20 +99,49 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         headlines: list[FeedItem] = []
         alerts: list[dict] = []
         source_status: dict[str, dict] = {}
+
         news_limit = self.entry.options.get(CONF_NEWS_LIMIT, self.entry.data[CONF_NEWS_LIMIT])
         configured_ars = self.entry.options.get(CONF_NINA_ARS, self.entry.data[CONF_NINA_ARS])
         police_count_mode = self.entry.options.get(
             CONF_POLICE_COUNT_MODE,
             self.entry.data.get(CONF_POLICE_COUNT_MODE, DEFAULT_POLICE_COUNT_MODE),
         )
+        focus_mode = self.entry.options.get(
+            CONF_FOCUS_MODE,
+            self.entry.data.get(CONF_FOCUS_MODE, DEFAULT_FOCUS_MODE),
+        )
+        local_keywords = self._parse_csv(
+            self.entry.options.get(
+                CONF_LOCAL_KEYWORDS,
+                self.entry.data.get(CONF_LOCAL_KEYWORDS, DEFAULT_LOCAL_KEYWORDS),
+            )
+        )
+        custom_press_feeds = self._parse_csv(
+            self.entry.options.get(
+                CONF_CUSTOM_PRESS_FEEDS,
+                self.entry.data.get(CONF_CUSTOM_PRESS_FEEDS, DEFAULT_CUSTOM_PRESS_FEEDS),
+            )
+        )
+        alert_radius_km = self.entry.options.get(
+            CONF_ALERT_RADIUS_KM,
+            self.entry.data.get(CONF_ALERT_RADIUS_KM, DEFAULT_ALERT_RADIUS_KM),
+        )
+        home_center = self._get_home_coordinates()
 
         if self.entry.options.get(CONF_INCLUDE_POLICE, self.entry.data[CONF_INCLUDE_POLICE]):
             nina_alerts, nina_status = await self._safe_fetch_nina_alerts(configured_ars)
-            alerts.extend(nina_alerts)
+            alerts.extend(
+                self._filter_alerts_by_radius(nina_alerts, home_center, alert_radius_km, focus_mode)
+            )
             source_status["nina"] = nina_status
 
         if self.entry.options.get(CONF_INCLUDE_PRESS, self.entry.data[CONF_INCLUDE_PRESS]):
             for source, url in PRESSEPORTAL_FEEDS.items():
+                items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
+                headlines.extend(items)
+                source_status[source] = status
+            for index, url in enumerate(custom_press_feeds, start=1):
+                source = f"custom_press_{index}"
                 items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
                 headlines.extend(items)
                 source_status[source] = status
@@ -122,12 +154,12 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         deduped = self._dedupe_items(headlines)
         scored = [self._score_item(item) for item in deduped]
+        scored = self._apply_focus_filter(scored, focus_mode, local_keywords)
         scored.sort(key=lambda item: item["score"], reverse=True)
 
         germany_score = min(
             100,
-            len(alerts) * 6
-            + sum(item["score"] for item in scored if item["region"] == "de") // 3,
+            len(alerts) * 6 + sum(item["score"] for item in scored if item["region"] == "de") // 3,
         )
         global_score = min(100, sum(item["score"] for item in scored[:10]) // 2)
         high_priority = sum(1 for item in scored if item["score"] >= 12)
@@ -138,21 +170,19 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             if item["source"] == "presseportal_blaulicht" and item["score"] >= 8
         )
         police_items = (
-            police_raw_items
-            if police_count_mode == POLICE_COUNT_MODE_ALL
-            else police_relevant_items
+            police_raw_items if police_count_mode == POLICE_COUNT_MODE_ALL else police_relevant_items
         )
         military_items = [item for item in scored if item["military_score"] >= 8][:10]
         military_signal = min(
             100,
-            len(military_items) * 7
-            + sum(item["military_score"] for item in military_items) // 2,
+            len(military_items) * 7 + sum(item["military_score"] for item in military_items) // 2,
         )
         stability_index = max(
             0,
             min(
                 100,
-                100 - (
+                100
+                - (
                     int(germany_score * 0.55)
                     + int(global_score * 0.15)
                     + high_priority * 3
@@ -188,6 +218,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             diagnostics={
                 "configured_nina_ars": configured_ars or "",
                 "degraded": any(status["ok"] is False for status in source_status.values()),
+                "focus_mode": focus_mode,
+                "local_keywords": ", ".join(local_keywords),
+                "alert_radius_km": alert_radius_km,
                 "police_count_mode": police_count_mode,
                 "police_raw_items": police_raw_items,
                 "police_relevant_items": police_relevant_items,
@@ -250,6 +283,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             alerts = await self._fetch_nina_alerts(ars)
             return alerts, {"ok": True, "items": len(alerts), "error": ""}
         except Exception as err:  # noqa: BLE001
+            if "404" in str(err):
+                _LOGGER.debug("NINA alert fetch skipped for unsupported dashboard ARS %s", ars)
+                return [], {"ok": True, "items": 0, "error": ""}
             _LOGGER.warning("NINA alert fetch failed: %s", err)
             return [], {"ok": False, "items": 0, "error": str(err)}
 
@@ -268,7 +304,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                             "source": item.get("provider") or "nina_dashboard",
                             "severity": item.get("severity") or item.get("msgType"),
                             "sent": item.get("sent"),
-                            "link": item.get("payload", {}).get("data") if isinstance(item.get("payload"), dict) else None,
+                            "link": item.get("payload", {}).get("data")
+                            if isinstance(item.get("payload"), dict)
+                            else None,
                             "latitude": None,
                             "longitude": None,
                         }
@@ -282,6 +320,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 if not isinstance(item, dict):
                     continue
                 payload = item.get("payload") or {}
+                lat, lon = self._extract_lat_lon(item)
                 alerts.append(
                     {
                         "id": item.get("id"),
@@ -296,8 +335,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                         if isinstance(payload.get("data"), dict)
                         else None,
                         "link": None,
-                        "latitude": self._extract_lat_lon(item)[0],
-                        "longitude": self._extract_lat_lon(item)[1],
+                        "latitude": lat,
+                        "longitude": lon,
                     }
                 )
 
@@ -305,20 +344,21 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         for alert in alerts:
             key = str(alert.get("id") or alert.get("title"))
             unique[key] = alert
+
         resolved = list(unique.values())
         for alert in resolved:
             if alert.get("latitude") is None and alert.get("longitude") is None:
                 lat, lon = await self._fetch_warning_centroid(alert.get("id"))
                 alert["latitude"] = lat
                 alert["longitude"] = lon
+
         return resolved
 
     async def _fetch_nina_dashboard(self, ars: str):
         """Fetch a dashboard, retrying with an 8-digit AGS fallback when needed."""
-        candidates = [ars]
-        normalized = ars.strip()
-        if len(normalized) == 12 and normalized[:8] not in candidates:
-            candidates.append(normalized[:8])
+        candidates = [ars.strip()]
+        if len(candidates[0]) == 12:
+            candidates.append(candidates[0][:8])
 
         last_error: Exception | None = None
         for candidate in candidates:
@@ -326,9 +366,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 return await fetch_json(self.hass, f"{NINA_BASE_URL}/dashboard/{candidate}.json")
             except Exception as err:  # noqa: BLE001
                 last_error = err
-                _LOGGER.warning("NINA dashboard lookup failed for %s: %s", candidate, err)
+                _LOGGER.debug("NINA dashboard lookup failed for %s: %s", candidate, err)
 
-        if last_error is not None:
+        if last_error is not None and "404" not in str(last_error):
             raise last_error
         return []
 
@@ -391,11 +431,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
     def _extract_lat_lon(self, item: dict) -> tuple[float | None, float | None]:
         """Try to extract coordinates from a map warning payload."""
-        for lat_key, lon_key in (
-            ("lat", "lon"),
-            ("latitude", "longitude"),
-            ("Lat", "Lon"),
-        ):
+        for lat_key, lon_key in (("lat", "lon"), ("latitude", "longitude"), ("Lat", "Lon")):
             lat = item.get(lat_key)
             lon = item.get(lon_key)
             if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
@@ -466,7 +502,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 }
             )
 
-        # Headlines are currently not geocoded, but we keep the structure for future enrichment.
         for headline in headlines:
             lat = headline.get("latitude")
             lon = headline.get("longitude")
@@ -484,3 +519,71 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             )
 
         return markers
+
+    def _parse_csv(self, value: str) -> list[str]:
+        """Parse a comma-separated option into normalized values."""
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    def _apply_focus_filter(self, items: list[dict], focus_mode: str, local_keywords: list[str]) -> list[dict]:
+        """Filter and boost items for local focus mode."""
+        if focus_mode != FOCUS_MODE_LOCAL or not local_keywords:
+            return items
+
+        filtered: list[dict] = []
+        keywords_lower = [keyword.lower() for keyword in local_keywords]
+        for item in items:
+            haystack = f"{item['title']} {item['summary']}".lower()
+            if any(keyword in haystack for keyword in keywords_lower):
+                item["score"] += 4
+                filtered.append(item)
+        return filtered
+
+    def _get_home_coordinates(self) -> tuple[float | None, float | None]:
+        """Read Home Assistant home coordinates."""
+        zone_home = self.hass.states.get("zone.home")
+        if zone_home is None:
+            return None, None
+        lat = zone_home.attributes.get("latitude")
+        lon = zone_home.attributes.get("longitude")
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            return float(lat), float(lon)
+        return None, None
+
+    def _filter_alerts_by_radius(
+        self,
+        alerts: list[dict],
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+        focus_mode: str,
+    ) -> list[dict]:
+        """Filter geocoded alerts around home when local mode is enabled."""
+        if focus_mode != FOCUS_MODE_LOCAL:
+            return alerts
+
+        home_lat, home_lon = home_center
+        if home_lat is None or home_lon is None:
+            return alerts
+
+        filtered: list[dict] = []
+        for alert in alerts:
+            lat = alert.get("latitude")
+            lon = alert.get("longitude")
+            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+                filtered.append(alert)
+                continue
+            if self._haversine_km(home_lat, home_lon, float(lat), float(lon)) <= radius_km:
+                filtered.append(alert)
+        return filtered
+
+    def _haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Return approximate distance in kilometers."""
+        radius = 6371.0
+        d_lat = math.radians(lat2 - lat1)
+        d_lon = math.radians(lon2 - lon1)
+        a = (
+            math.sin(d_lat / 2) ** 2
+            + math.cos(math.radians(lat1))
+            * math.cos(math.radians(lat2))
+            * math.sin(d_lon / 2) ** 2
+        )
+        return 2 * radius * math.atan2(math.sqrt(a), math.sqrt(1 - a))
