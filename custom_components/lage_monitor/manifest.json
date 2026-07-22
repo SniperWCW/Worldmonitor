@@ -1,0 +1,21 @@
+{
+  "domain": "lage_monitor",
+  "name": "Lage Monitor",
+  "codeowners": [
+    "@koala73"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http",
+    "lovelace"
+  ],
+  "documentation": "https://github.com/koala73/worldmonitor",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "loggers": [
+    "custom_components.lage_monitor"
+  ],
+  "requirements": [],
+  "version": "0.1.0"
+}

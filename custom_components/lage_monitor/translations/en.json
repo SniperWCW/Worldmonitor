@@ -1,0 +1,43 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Lage Monitor",
+        "description": "Aggregate German warning and news feeds into a Home Assistant situation overview.",
+        "data": {
+          "nina_ars": "Optional NINA ARS code for regional dashboard alerts",
+          "include_police": "Include NINA and police alerts",
+          "include_press": "Include Presseportal feeds",
+          "include_news": "Include major German news RSS feeds",
+          "news_limit": "Maximum visible headlines",
+          "scan_interval": "Refresh interval in seconds"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "germany_score": {
+        "name": "Germany situation score"
+      },
+      "global_score": {
+        "name": "Global situation score"
+      },
+      "military_signal_score": {
+        "name": "Military activity signal"
+      },
+      "stability_index": {
+        "name": "Stability index"
+      },
+      "active_alerts": {
+        "name": "Active alerts"
+      },
+      "police_items": {
+        "name": "Police and blue-light items"
+      },
+      "high_priority_items": {
+        "name": "High-priority events"
+      }
+    }
+  }
+}

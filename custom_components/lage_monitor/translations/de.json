@@ -1,0 +1,43 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Lage Monitor",
+        "description": "Bündelt amtliche Warnungen und Nachrichtenquellen zu einer Lageübersicht in Home Assistant.",
+        "data": {
+          "nina_ars": "Optionaler NINA-ARS-Code für regionale Dashboard-Warnungen",
+          "include_police": "NINA- und Polizeiwarnungen einbeziehen",
+          "include_press": "Presseportal-Feeds einbeziehen",
+          "include_news": "Große deutsche Nachrichten-RSS-Feeds einbeziehen",
+          "news_limit": "Maximale Anzahl sichtbarer Schlagzeilen",
+          "scan_interval": "Aktualisierungsintervall in Sekunden"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "germany_score": {
+        "name": "Deutschland Lage-Score"
+      },
+      "global_score": {
+        "name": "Welt Lage-Score"
+      },
+      "military_signal_score": {
+        "name": "Militärisches Aktivitätssignal"
+      },
+      "stability_index": {
+        "name": "Stabilitätsindex"
+      },
+      "active_alerts": {
+        "name": "Aktive Warnungen"
+      },
+      "police_items": {
+        "name": "Polizei- und Blaulichtmeldungen"
+      },
+      "high_priority_items": {
+        "name": "Hochpriorisierte Ereignisse"
+      }
+    }
+  }
+}
