@@ -8,6 +8,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers import selector
 
 from .const import (
     CONF_INCLUDE_NEWS,
@@ -15,12 +16,14 @@ from .const import (
     CONF_INCLUDE_PRESS,
     CONF_NEWS_LIMIT,
     CONF_NINA_ARS,
+    CONF_POLICE_COUNT_MODE,
     CONF_SCAN_INTERVAL,
     DEFAULT_INCLUDE_NEWS,
     DEFAULT_INCLUDE_POLICE,
     DEFAULT_INCLUDE_PRESS,
     DEFAULT_NEWS_LIMIT,
     DEFAULT_NINA_ARS,
+    DEFAULT_POLICE_COUNT_MODE,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -47,6 +50,19 @@ def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_NEWS_LIMIT,
                 default=defaults.get(CONF_NEWS_LIMIT, DEFAULT_NEWS_LIMIT),
             ): vol.All(vol.Coerce(int), vol.Range(min=5, max=50)),
+            vol.Optional(
+                CONF_POLICE_COUNT_MODE,
+                default=defaults.get(CONF_POLICE_COUNT_MODE, DEFAULT_POLICE_COUNT_MODE),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                    options=[
+                        selector.SelectOptionDict(value="all", label="Alle Blaulichtmeldungen"),
+                        selector.SelectOptionDict(value="relevant", label="Nur relevante Meldungen"),
+                    ],
+                    translation_key=CONF_POLICE_COUNT_MODE,
+                )
+            ),
             vol.Optional(
                 CONF_SCAN_INTERVAL,
                 default=defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),

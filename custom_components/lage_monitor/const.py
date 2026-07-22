@@ -13,6 +13,7 @@ CONF_INCLUDE_POLICE = "include_police"
 CONF_INCLUDE_PRESS = "include_press"
 CONF_INCLUDE_NEWS = "include_news"
 CONF_NEWS_LIMIT = "news_limit"
+CONF_POLICE_COUNT_MODE = "police_count_mode"
 
 DEFAULT_SCAN_INTERVAL = 300
 DEFAULT_NINA_ARS = ""
@@ -20,6 +21,7 @@ DEFAULT_INCLUDE_POLICE = True
 DEFAULT_INCLUDE_PRESS = True
 DEFAULT_INCLUDE_NEWS = True
 DEFAULT_NEWS_LIMIT = 20
+DEFAULT_POLICE_COUNT_MODE = "all"
 
 ATTR_ALERTS = "alerts"
 ATTR_HEADLINES = "headlines"
@@ -31,6 +33,7 @@ ATTR_MAP_MARKERS = "map_markers"
 ATTR_MILITARY_ITEMS = "military_items"
 ATTR_SOURCE_STATUS = "source_status"
 ATTR_DIAGNOSTICS = "diagnostics"
+ATTR_HOME_COORDINATES = "home_coordinates"
 
 NINA_BASE_URL = "https://nina.api.bund.dev"
 
@@ -43,9 +46,12 @@ GERMAN_NEWS_FEEDS: dict[str, str] = {
 }
 
 PRESSEPORTAL_FEEDS: dict[str, str] = {
-    "presseportal_blaulicht": "https://www.presseportal.de/rss/polizei",
+    "presseportal_blaulicht": "https://www.presseportal.de/rss/polizei/typ/1.rss2",
     "presseportal_panorama": "https://www.presseportal.de/rss/panorama",
 }
+
+POLICE_COUNT_MODE_ALL = "all"
+POLICE_COUNT_MODE_RELEVANT = "relevant"
 
 KEYWORD_WEIGHTS: dict[str, int] = {
     "anschlag": 12,

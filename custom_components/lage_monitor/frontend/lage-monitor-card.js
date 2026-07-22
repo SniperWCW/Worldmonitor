@@ -72,6 +72,16 @@ function mergeConfigWithDefaults(hass, config) {
   };
 }
 
+function getHomeCenter(hass) {
+  const zoneHome = hass.states["zone.home"];
+  const lat = zoneHome?.attributes?.latitude;
+  const lon = zoneHome?.attributes?.longitude;
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    return [Number(lat), Number(lon)];
+  }
+  return DEFAULT_CENTER;
+}
+
 class LageMonitorCard extends HTMLElement {
   setConfig(config) {
     this._config = { ...DEFAULT_CONFIG, ...config };
@@ -175,7 +185,7 @@ class LageMonitorCard extends HTMLElement {
     `;
 
     if (config.show_map) {
-      this._renderMap(markers, config.zoom);
+      this._renderMap(hass, markers, config.zoom);
     }
   }
 
@@ -183,7 +193,7 @@ class LageMonitorCard extends HTMLElement {
     return 8;
   }
 
-  async _renderMap(markers, zoom) {
+  async _renderMap(hass, markers, zoom) {
     const mapRoot = this.querySelector("#map");
     if (!mapRoot) {
       return;
@@ -222,13 +232,14 @@ class LageMonitorCard extends HTMLElement {
     } else if (bounds.length > 1) {
       this._map.fitBounds(bounds, { padding: [24, 24] });
     } else {
-      this._map.setView(DEFAULT_CENTER, zoom || 6);
-      L.circleMarker(DEFAULT_CENTER, {
+      const homeCenter = getHomeCenter(hass);
+      this._map.setView(homeCenter, zoom || 6);
+      L.circleMarker(homeCenter, {
         radius: 8,
         color: "#2563eb",
         fillColor: "#60a5fa",
         fillOpacity: 0.85
-      }).addTo(this._map).bindPopup("Derzeit keine geokodierten Warnungen verfuegbar");
+      }).addTo(this._map).bindPopup("Derzeit keine geokodierten Warnungen verfuegbar. Fallback auf Home-Position.");
     }
   }
 

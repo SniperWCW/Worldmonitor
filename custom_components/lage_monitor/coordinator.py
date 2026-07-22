@@ -28,11 +28,15 @@ from .const import (
     CONF_INCLUDE_PRESS,
     CONF_NEWS_LIMIT,
     CONF_NINA_ARS,
+    CONF_POLICE_COUNT_MODE,
     CONF_SCAN_INTERVAL,
+    DEFAULT_POLICE_COUNT_MODE,
     GERMAN_NEWS_FEEDS,
     KEYWORD_WEIGHTS,
     MILITARY_KEYWORDS,
     NINA_BASE_URL,
+    POLICE_COUNT_MODE_ALL,
+    POLICE_COUNT_MODE_RELEVANT,
     PRESSEPORTAL_FEEDS,
 )
 from .feed import FeedItem, fetch_feed, fetch_json, iso_timestamp
@@ -94,6 +98,10 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         source_status: dict[str, dict] = {}
         news_limit = self.entry.options.get(CONF_NEWS_LIMIT, self.entry.data[CONF_NEWS_LIMIT])
         configured_ars = self.entry.options.get(CONF_NINA_ARS, self.entry.data[CONF_NINA_ARS])
+        police_count_mode = self.entry.options.get(
+            CONF_POLICE_COUNT_MODE,
+            self.entry.data.get(CONF_POLICE_COUNT_MODE, DEFAULT_POLICE_COUNT_MODE),
+        )
 
         if self.entry.options.get(CONF_INCLUDE_POLICE, self.entry.data[CONF_INCLUDE_POLICE]):
             nina_alerts, nina_status = await self._safe_fetch_nina_alerts(configured_ars)
@@ -123,7 +131,17 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         )
         global_score = min(100, sum(item["score"] for item in scored[:10]) // 2)
         high_priority = sum(1 for item in scored if item["score"] >= 12)
-        police_items = sum(1 for item in scored if "presseportal_blaulicht" in item["source"])
+        police_raw_items = sum(1 for item in deduped if item.source == "presseportal_blaulicht")
+        police_relevant_items = sum(
+            1
+            for item in scored
+            if item["source"] == "presseportal_blaulicht" and item["score"] >= 8
+        )
+        police_items = (
+            police_raw_items
+            if police_count_mode == POLICE_COUNT_MODE_ALL
+            else police_relevant_items
+        )
         military_items = [item for item in scored if item["military_score"] >= 8][:10]
         military_signal = min(
             100,
@@ -170,6 +188,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             diagnostics={
                 "configured_nina_ars": configured_ars or "",
                 "degraded": any(status["ok"] is False for status in source_status.values()),
+                "police_count_mode": police_count_mode,
+                "police_raw_items": police_raw_items,
+                "police_relevant_items": police_relevant_items,
                 "sources_total": len(source_status),
                 "sources_ok": sum(1 for status in source_status.values() if status["ok"] is True),
             },
