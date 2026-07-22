@@ -29,6 +29,8 @@ ATTR_SCORE_BREAKDOWN = "score_breakdown"
 ATTR_TOP_KEYWORDS = "top_keywords"
 ATTR_MAP_MARKERS = "map_markers"
 ATTR_MILITARY_ITEMS = "military_items"
+ATTR_SOURCE_STATUS = "source_status"
+ATTR_DIAGNOSTICS = "diagnostics"
 
 NINA_BASE_URL = "https://nina.api.bund.dev"
 

@@ -37,6 +37,9 @@
       },
       "high_priority_items": {
         "name": "Hochpriorisierte Ereignisse"
+      },
+      "diagnostic_state": {
+        "name": "Lage Monitor Diagnose"
       }
     }
   }

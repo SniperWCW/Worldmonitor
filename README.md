@@ -25,6 +25,7 @@ Custom Home Assistant integration plus Lovelace card for a German and global sit
 - `sensor.hochpriorisierte_ereignisse`
 - `sensor.militärisches_aktivitätssignal`
 - `sensor.stabilitätsindex`
+- `sensor.lage_monitor_diagnose`
 
 The richest attributes live on the Germany score entity:
 
@@ -34,6 +35,8 @@ The richest attributes live on the Germany score entity:
 - `last_update`
 - `map_markers`
 - `military_items`
+- `source_status`
+- `diagnostics`
 - `score_breakdown`
 - `top_keywords`
 

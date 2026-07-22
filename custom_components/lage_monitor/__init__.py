@@ -28,6 +28,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Lage Monitor from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     await _async_register_frontend(hass)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -88,3 +89,8 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
             CARD_RESOURCE_URL,
             err,
         )
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the entry after options are updated."""
+    await hass.config_entries.async_reload(entry.entry_id)

@@ -6,7 +6,6 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
-import math
 import logging
 import re
 from urllib.parse import quote
@@ -59,6 +58,8 @@ class LageSnapshot:
     military_items: list[dict]
     top_keywords: list[dict]
     sources: list[str]
+    source_status: dict[str, dict]
+    diagnostics: dict[str, str | int | bool]
     last_update: str
     score_breakdown: dict[str, int]
 
@@ -81,24 +82,35 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         try:
             return await self._build_snapshot()
         except Exception as err:  # noqa: BLE001
-            raise UpdateFailed(f"Could not update Lage Monitor: {err}") from err
+            if self.data is not None:
+                _LOGGER.warning("Could not update Lage Monitor, keeping previous data: %s", err)
+                return self.data
+            _LOGGER.warning("Could not update Lage Monitor, using empty snapshot: %s", err)
+            return self._empty_snapshot()
 
     async def _build_snapshot(self) -> LageSnapshot:
         headlines: list[FeedItem] = []
         alerts: list[dict] = []
+        source_status: dict[str, dict] = {}
         news_limit = self.entry.options.get(CONF_NEWS_LIMIT, self.entry.data[CONF_NEWS_LIMIT])
         configured_ars = self.entry.options.get(CONF_NINA_ARS, self.entry.data[CONF_NINA_ARS])
 
         if self.entry.options.get(CONF_INCLUDE_POLICE, self.entry.data[CONF_INCLUDE_POLICE]):
-            alerts.extend(await self._fetch_nina_alerts(configured_ars))
+            nina_alerts, nina_status = await self._safe_fetch_nina_alerts(configured_ars)
+            alerts.extend(nina_alerts)
+            source_status["nina"] = nina_status
 
         if self.entry.options.get(CONF_INCLUDE_PRESS, self.entry.data[CONF_INCLUDE_PRESS]):
             for source, url in PRESSEPORTAL_FEEDS.items():
-                headlines.extend(await fetch_feed(self.hass, url, source, max(5, news_limit // 3)))
+                items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
+                headlines.extend(items)
+                source_status[source] = status
 
         if self.entry.options.get(CONF_INCLUDE_NEWS, self.entry.data[CONF_INCLUDE_NEWS]):
             for source, url in GERMAN_NEWS_FEEDS.items():
-                headlines.extend(await fetch_feed(self.hass, url, source, max(5, news_limit // 3)))
+                items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
+                headlines.extend(items)
+                source_status[source] = status
 
         deduped = self._dedupe_items(headlines)
         scored = [self._score_item(item) for item in deduped]
@@ -154,6 +166,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 for keyword, count in keyword_counter.most_common(8)
             ],
             sources=sorted({item["source"] for item in scored}),
+            source_status=source_status,
+            diagnostics={
+                "configured_nina_ars": configured_ars or "",
+                "degraded": any(status["ok"] is False for status in source_status.values()),
+                "sources_total": len(source_status),
+                "sources_ok": sum(1 for status in source_status.values() if status["ok"] is True),
+            },
             last_update=iso_timestamp(),
             score_breakdown={
                 "alerts": len(alerts) * 6,
@@ -162,6 +181,56 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 "police_items": police_items * 2,
             },
         )
+
+    def _empty_snapshot(self) -> LageSnapshot:
+        """Return a safe fallback snapshot so entities can still be created."""
+        return LageSnapshot(
+            germany_score=0,
+            global_score=0,
+            active_alerts=0,
+            police_items=0,
+            high_priority_items=0,
+            military_signal_score=0,
+            stability_index=100,
+            headlines=[],
+            alerts=[],
+            map_markers=[],
+            military_items=[],
+            top_keywords=[],
+            sources=[],
+            source_status={},
+            diagnostics={
+                "configured_nina_ars": self.entry.options.get(CONF_NINA_ARS, self.entry.data[CONF_NINA_ARS]) or "",
+                "degraded": True,
+                "sources_total": 0,
+                "sources_ok": 0,
+            },
+            last_update=iso_timestamp(),
+            score_breakdown={
+                "alerts": 0,
+                "military_signal": 0,
+                "high_priority_items": 0,
+                "police_items": 0,
+            },
+        )
+
+    async def _safe_fetch_feed(self, url: str, source: str, limit: int) -> tuple[list[FeedItem], dict]:
+        """Fetch a feed without aborting the whole integration on failure."""
+        try:
+            items = await fetch_feed(self.hass, url, source, limit)
+            return items, {"ok": True, "items": len(items), "error": ""}
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Feed %s failed: %s", source, err)
+            return [], {"ok": False, "items": 0, "error": str(err)}
+
+    async def _safe_fetch_nina_alerts(self, ars: str) -> tuple[list[dict], dict]:
+        """Fetch NINA alerts without aborting the whole integration on failure."""
+        try:
+            alerts = await self._fetch_nina_alerts(ars)
+            return alerts, {"ok": True, "items": len(alerts), "error": ""}
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("NINA alert fetch failed: %s", err)
+            return [], {"ok": False, "items": 0, "error": str(err)}
 
     async def _fetch_nina_alerts(self, ars: str) -> list[dict]:
         alerts: list[dict] = []
