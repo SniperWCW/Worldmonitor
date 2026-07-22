@@ -18,14 +18,14 @@ Custom Home Assistant integration plus Lovelace card for a German and global sit
 
 ## Included sensors
 
-- `sensor.deutschland_lage_score`
-- `sensor.welt_lage_score`
-- `sensor.aktive_warnungen`
-- `sensor.polizei_und_blaulichtmeldungen`
-- `sensor.hochpriorisierte_ereignisse`
-- `sensor.militärisches_aktivitätssignal`
-- `sensor.stabilitätsindex`
-- `sensor.lage_monitor_diagnose`
+- `sensor.germany_score`
+- `sensor.global_score`
+- `sensor.active_alerts`
+- `sensor.police_items`
+- `sensor.high_priority_items`
+- `sensor.military_signal_score`
+- `sensor.stability_index`
+- `sensor.diagnostic_state`
 
 The richest attributes live on the Germany score entity:
 
@@ -80,7 +80,7 @@ Copy the custom component into your Home Assistant config directory:
 custom_components/lage_monitor/
 ```
 
-The dashboard card is part of the custom component and now lives here:
+The dashboard card is part of the custom component and lives here:
 
 ```text
 custom_components/lage_monitor/frontend/lage-monitor-card.js
@@ -89,7 +89,7 @@ custom_components/lage_monitor/frontend/lage-monitor-card.js
 Then in Home Assistant:
 
 1. Restart Home Assistant
-2. The integration now tries to auto-register the Lovelace resource at `/lage_monitor_frontend/lage-monitor-card.js`
+2. The integration tries to auto-register the Lovelace resource at `/lage_monitor_frontend/lage-monitor-card.js`
 3. If your dashboard uses YAML mode or Home Assistant blocks storage-resource creation, add this fallback manually:
 
 ```yaml
@@ -100,16 +100,27 @@ lovelace:
 ```
 
 4. Add the integration via the UI
-5. Create a card using:
+5. Create a card using the UI editor or minimal YAML:
 
 ```yaml
 type: custom:lage-monitor-card
-entity: sensor.deutschland_lage_score
-alerts_entity: sensor.aktive_warnungen
-stability_entity: sensor.stabilitätsindex
-military_entity: sensor.militärisches_aktivitätssignal
+```
+
+Optional full YAML with overrides:
+
+```yaml
+type: custom:lage-monitor-card
 title: Lage Monitor
-limit: 8
+limit: 5
+zoom: 6
+map_height: 320
+show_map: true
+show_keywords: true
+show_military: true
+entity: sensor.germany_score
+alerts_entity: sensor.active_alerts
+stability_entity: sensor.stability_index
+military_entity: sensor.military_signal_score
 ```
 
 ## Recommended next steps
