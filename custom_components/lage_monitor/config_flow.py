@@ -37,7 +37,7 @@ from .const import (
 
 
 def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Build the config/options schema."""
+    """Build a Home-Assistant-friendly schema without advanced selectors."""
     return vol.Schema(
         {
             vol.Optional(CONF_NINA_ARS, default=defaults.get(CONF_NINA_ARS, DEFAULT_NINA_ARS)): str,
@@ -60,21 +60,11 @@ def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Optional(
                 CONF_POLICE_COUNT_MODE,
                 default=defaults.get(CONF_POLICE_COUNT_MODE, DEFAULT_POLICE_COUNT_MODE),
-            ): vol.In(
-                {
-                    "all": "Alle Blaulichtmeldungen",
-                    "relevant": "Nur relevante Meldungen",
-                }
-            ),
+            ): vol.In(["all", "relevant"]),
             vol.Optional(
                 CONF_FOCUS_MODE,
                 default=defaults.get(CONF_FOCUS_MODE, DEFAULT_FOCUS_MODE),
-            ): vol.In(
-                {
-                    "germany": "Deutschlandweit",
-                    "local": "Standort / Landkreis / Orte",
-                }
-            ),
+            ): vol.In(["germany", "local"]),
             vol.Optional(
                 CONF_LOCAL_KEYWORDS,
                 default=defaults.get(CONF_LOCAL_KEYWORDS, DEFAULT_LOCAL_KEYWORDS),
@@ -111,19 +101,15 @@ class LageMonitorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry):
-        """Return the options flow."""
-        return LageMonitorOptionsFlow(config_entry)
+        """Return the options flow handler."""
+        return LageMonitorOptionsFlow()
 
 
 class LageMonitorOptionsFlow(config_entries.OptionsFlow):
     """Handle Lage Monitor options."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize the options flow."""
-        self.config_entry = config_entry
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
-        """Manage the options."""
+        """Manage options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 

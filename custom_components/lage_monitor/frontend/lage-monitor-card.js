@@ -21,6 +21,260 @@ const DEFAULT_CONFIG = {
   show_military: true
 };
 
+const CARD_STYLE = `
+  :host {
+    display: block;
+  }
+  ha-card {
+    overflow: hidden;
+    border-radius: 22px;
+  }
+  .shell {
+    padding: 18px;
+    background:
+      radial-gradient(circle at top left, rgba(37, 99, 235, 0.16), transparent 38%),
+      radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 30%),
+      var(--ha-card-background, var(--card-background-color, #fff));
+  }
+  .hero {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .hero-main {
+    padding: 18px;
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.06);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+  .title {
+    font-size: 1.9rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin: 0 0 8px;
+  }
+  .sub {
+    color: var(--secondary-text-color);
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+  }
+  .score {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .score-value {
+    font-size: 3rem;
+    line-height: 1;
+    font-weight: 800;
+  }
+  .score-label {
+    color: var(--secondary-text-color);
+    font-size: 0.9rem;
+  }
+  .hero-side {
+    display: grid;
+    gap: 12px;
+  }
+  .metric {
+    padding: 14px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.66);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    backdrop-filter: blur(6px);
+  }
+  .metric-label {
+    color: var(--secondary-text-color);
+    font-size: 0.78rem;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .metric-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .grid {
+    display: grid;
+    gap: 16px;
+  }
+  .panel {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.72);
+    overflow: hidden;
+  }
+  .panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px 10px;
+  }
+  .panel-title {
+    font-size: 1rem;
+    font-weight: 700;
+  }
+  .panel-note {
+    color: var(--secondary-text-color);
+    font-size: 0.76rem;
+  }
+  .panel-body {
+    padding: 0 16px 16px;
+  }
+  .items {
+    display: grid;
+    gap: 12px;
+  }
+  .item {
+    padding-top: 12px;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+  }
+  .item:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .item-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .badge {
+    min-width: 2.1rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #dc2626, #f97316);
+    color: white;
+    font-size: 0.75rem;
+    text-align: center;
+    font-weight: 700;
+  }
+  .source {
+    color: var(--secondary-text-color);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+  .link {
+    color: var(--primary-text-color);
+    text-decoration: none;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .summary {
+    color: var(--secondary-text-color);
+    font-size: 0.92rem;
+    line-height: 1.45;
+    margin-top: 6px;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chip {
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(255, 255, 255, 0.84);
+    font-size: 0.82rem;
+  }
+  .empty {
+    color: var(--secondary-text-color);
+    font-size: 0.92rem;
+  }
+  #map {
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: #eef4fb;
+  }
+  .editor {
+    display: grid;
+    gap: 14px;
+    padding: 10px 0 18px;
+  }
+  .editor-section {
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 18px;
+    padding: 14px;
+    background: rgba(255, 255, 255, 0.74);
+  }
+  .editor-title {
+    font-weight: 700;
+    margin-bottom: 10px;
+    font-size: 0.98rem;
+  }
+  .editor-help {
+    color: var(--secondary-text-color);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    margin-bottom: 10px;
+  }
+  .editor-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .editor-grid.single {
+    grid-template-columns: 1fr;
+  }
+  .editor-row {
+    display: grid;
+    gap: 5px;
+  }
+  .editor-label {
+    font-size: 0.84rem;
+    color: var(--secondary-text-color);
+  }
+  .editor input[type="text"],
+  .editor input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 42px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--primary-text-color);
+    font: inherit;
+  }
+  .editor-toggle-grid {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .editor-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(255, 255, 255, 0.84);
+  }
+  @media (max-width: 640px) {
+    .hero,
+    .editor-grid {
+      grid-template-columns: 1fr;
+    }
+    .shell {
+      padding: 14px;
+    }
+    .title {
+      font-size: 1.65rem;
+    }
+    .score-value {
+      font-size: 2.5rem;
+    }
+  }
+`;
+
 let leafletLoader;
 
 function ensureLeaflet() {
@@ -83,6 +337,11 @@ function getHomeCenter(hass) {
 }
 
 class LageMonitorCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+  }
+
   setConfig(config) {
     this._config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -91,95 +350,130 @@ class LageMonitorCard extends HTMLElement {
     const config = mergeConfigWithDefaults(hass, this._config || DEFAULT_CONFIG);
     const stateObj = hass.states[config.entity];
     if (!stateObj) {
-      this.innerHTML = `<ha-card><div class="card-content">Entity ${config.entity} not found.</div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${CARD_STYLE}</style><ha-card><div class="shell"><div class="empty">Entity ${config.entity} not found.</div></div></ha-card>`;
       return;
     }
 
     const attrs = stateObj.attributes;
     const headlines = (attrs.headlines || []).slice(0, config.limit);
     const alerts = (attrs.alerts || []).slice(0, 4);
-    const keywords = (attrs.top_keywords || []).slice(0, 5);
+    const keywords = (attrs.top_keywords || []).slice(0, 6);
     const markers = attrs.map_markers || [];
     const militaryItems = (attrs.military_items || []).slice(0, 4);
-    const stability = hass.states[config.stability_entity]?.state;
-    const military = hass.states[config.military_entity]?.state;
+    const stability = hass.states[config.stability_entity]?.state ?? "-";
+    const military = hass.states[config.military_entity]?.state ?? "-";
     const activeAlerts = hass.states[config.alerts_entity]?.state || alerts.length;
 
-    this.innerHTML = `
-      <ha-card header="${config.title}">
-        <div class="wrapper">
-          <div class="score-row">
-            <div class="score-block hero">
-              <div class="label">Deutschland</div>
-              <div class="value">${stateObj.state}</div>
+    this.shadowRoot.innerHTML = `
+      <style>${CARD_STYLE}</style>
+      <ha-card>
+        <div class="shell">
+          <div class="hero">
+            <div class="hero-main">
+              <div class="title">${config.title}</div>
+              <div class="sub">Lageueberblick fuer Deutschland und relevante Ereignisse</div>
+              <div class="score">
+                <div class="score-value">${stateObj.state}</div>
+                <div class="score-label">Deutschland Lage-Score</div>
+              </div>
             </div>
-            <div class="score-block hero">
-              <div class="label">Aktive Warnungen</div>
-              <div class="value">${activeAlerts}</div>
+            <div class="hero-side">
+              <div class="metric">
+                <div class="metric-label">Aktive Warnungen</div>
+                <div class="metric-value">${activeAlerts}</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Stabilitaet</div>
+                <div class="metric-value">${stability}</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Militaersignal</div>
+                <div class="metric-value">${military}</div>
+              </div>
             </div>
           </div>
-          <div class="score-row three">
-            <div class="score-block compact">
-              <div class="label">Stabilitaetsindex</div>
-              <div class="value small">${stability ?? "-"}</div>
-            </div>
-            <div class="score-block compact">
-              <div class="label">Militaersignal</div>
-              <div class="value small">${military ?? "-"}</div>
-            </div>
-            <div class="score-block compact">
-              <div class="label">Marker</div>
-              <div class="value small">${markers.length}</div>
-            </div>
-          </div>
-          ${config.show_map ? `
-            <div class="section">
-              <div class="section-title">Lagekarte</div>
-              <div id="map" style="min-height:${Number(config.map_height) || 320}px"></div>
-              <div class="map-note">Kartengrundlage: OpenStreetMap. Ohne geokodierte Warnungen wird Deutschland als Basisansicht gezeigt.</div>
-            </div>
-          ` : ""}
-          <div class="section">
-            <div class="section-title">Top-Ereignisse</div>
-            ${headlines.length ? headlines.map((item) => `
-              <div class="item">
-                <div class="item-top">
-                  <span class="badge">${item.score}</span>
-                  <span class="source">${item.source}</span>
+          <div class="grid">
+            ${config.show_map ? `
+              <div class="panel">
+                <div class="panel-head">
+                  <div class="panel-title">Lagekarte</div>
+                  <div class="panel-note">${markers.length} Marker</div>
                 </div>
-                <a href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
-                <div class="summary">${item.summary || ""}</div>
-              </div>
-            `).join("") : `<div class="empty">Noch keine Ereignisse verfuegbar</div>`}
-          </div>
-          <div class="section">
-            <div class="section-title">Amtliche Warnungen</div>
-            ${alerts.length ? alerts.map((item) => `
-              <div class="alert-item">
-                <span class="source">${item.source}</span>
-                <span>${item.title || "Warnung ohne Titel"}</span>
-              </div>
-            `).join("") : `<div class="empty">Keine Warnungen vorhanden</div>`}
-          </div>
-          ${config.show_military ? `
-            <div class="section">
-              <div class="section-title">Militaerische Aktivitaet</div>
-              ${militaryItems.length ? militaryItems.map((item) => `
-                <div class="alert-item">
-                  <span class="source">${item.source}</span>
-                  <span>${item.title}</span>
+                <div class="panel-body">
+                  <div id="map" style="min-height:${Number(config.map_height) || 320}px"></div>
                 </div>
-              `).join("") : `<div class="empty">Noch keine militaerischen Signalereignisse erkannt</div>`}
-            </div>
-          ` : ""}
-          ${config.show_keywords ? `
-            <div class="section">
-              <div class="section-title">Schluesselbegriffe</div>
-              <div class="chips">
-                ${keywords.length ? keywords.map((item) => `<span class="chip">${item.keyword} (${item.count})</span>`).join("") : `<span class="empty">Noch keine Schlagwoerter</span>`}
+              </div>
+            ` : ""}
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Top-Ereignisse</div>
+                <div class="panel-note">${headlines.length} Eintraege</div>
+              </div>
+              <div class="panel-body">
+                <div class="items">
+                  ${headlines.length ? headlines.map((item) => `
+                    <div class="item">
+                      <div class="item-top">
+                        <span class="badge">${item.score}</span>
+                        <span class="source">${item.source}</span>
+                      </div>
+                      <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
+                      <div class="summary">${item.summary || ""}</div>
+                    </div>
+                  `).join("") : `<div class="empty">Noch keine Ereignisse verfuegbar</div>`}
+                </div>
               </div>
             </div>
-          ` : ""}
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Amtliche Warnungen</div>
+                <div class="panel-note">${alerts.length}</div>
+              </div>
+              <div class="panel-body">
+                <div class="items">
+                  ${alerts.length ? alerts.map((item) => `
+                    <div class="item">
+                      <div class="item-top">
+                        <span class="source">${item.source}</span>
+                      </div>
+                      <div class="link">${item.title || "Warnung ohne Titel"}</div>
+                    </div>
+                  `).join("") : `<div class="empty">Keine Warnungen vorhanden</div>`}
+                </div>
+              </div>
+            </div>
+            ${config.show_military ? `
+              <div class="panel">
+                <div class="panel-head">
+                  <div class="panel-title">Militaerische Aktivitaet</div>
+                </div>
+                <div class="panel-body">
+                  <div class="items">
+                    ${militaryItems.length ? militaryItems.map((item) => `
+                      <div class="item">
+                        <div class="item-top">
+                          <span class="source">${item.source}</span>
+                        </div>
+                        <div class="link">${item.title}</div>
+                      </div>
+                    `).join("") : `<div class="empty">Noch keine militaerischen Signalereignisse erkannt</div>`}
+                  </div>
+                </div>
+              </div>
+            ` : ""}
+            ${config.show_keywords ? `
+              <div class="panel">
+                <div class="panel-head">
+                  <div class="panel-title">Schluesselbegriffe</div>
+                </div>
+                <div class="panel-body">
+                  <div class="chips">
+                    ${keywords.length ? keywords.map((item) => `<span class="chip">${item.keyword} (${item.count})</span>`).join("") : `<span class="empty">Noch keine Schlagwoerter</span>`}
+                  </div>
+                </div>
+              </div>
+            ` : ""}
+          </div>
         </div>
       </ha-card>
     `;
@@ -194,7 +488,7 @@ class LageMonitorCard extends HTMLElement {
   }
 
   async _renderMap(hass, markers, zoom) {
-    const mapRoot = this.querySelector("#map");
+    const mapRoot = this.shadowRoot.getElementById("map");
     if (!mapRoot) {
       return;
     }
@@ -253,6 +547,11 @@ class LageMonitorCard extends HTMLElement {
 }
 
 class LageMonitorCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+  }
+
   setConfig(config) {
     this._config = { ...DEFAULT_CONFIG, ...config };
     this._render();
@@ -260,7 +559,8 @@ class LageMonitorCardEditor extends HTMLElement {
 
   _render() {
     const config = this._config || DEFAULT_CONFIG;
-    this.innerHTML = `
+    this.shadowRoot.innerHTML = `
+      <style>${CARD_STYLE}</style>
       <div class="editor">
         <div class="editor-section">
           <div class="editor-title">Allgemein</div>
@@ -277,13 +577,13 @@ class LageMonitorCardEditor extends HTMLElement {
           </div>
           <div class="editor-toggle-grid">
             ${this._toggle("show_map", "Karte anzeigen", config.show_map)}
-            ${this._toggle("show_keywords", "Schluesselbegriffe", config.show_keywords)}
-            ${this._toggle("show_military", "Militaerbereich", config.show_military)}
+            ${this._toggle("show_keywords", "Schluesselbegriffe anzeigen", config.show_keywords)}
+            ${this._toggle("show_military", "Militaerbereich anzeigen", config.show_military)}
           </div>
         </div>
         <div class="editor-section">
           <div class="editor-title">Entitaeten</div>
-          <div class="editor-help">Normalerweise brauchst du hier nichts aendern. Die Karte versucht deutsche und englische Standard-Entity-IDs automatisch zu finden.</div>
+          <div class="editor-help">Normalerweise musst du hier nichts aendern. Die Karte erkennt deutsche und englische Standard-Entity-IDs automatisch.</div>
           <div class="editor-grid single">
             ${this._field("entity", "Score-Entity", config.entity || "")}
             ${this._field("alerts_entity", "Alerts-Entity", config.alerts_entity || "")}
@@ -294,7 +594,7 @@ class LageMonitorCardEditor extends HTMLElement {
       </div>
     `;
 
-    this.querySelectorAll("input").forEach((input) => {
+    this.shadowRoot.querySelectorAll("input").forEach((input) => {
       input.addEventListener("change", (event) => this._valueChanged(event));
     });
   }
@@ -332,7 +632,9 @@ class LageMonitorCardEditor extends HTMLElement {
 
     this._config = { ...this._config, [key]: value };
     this.dispatchEvent(new CustomEvent("config-changed", {
-      detail: { config: this._config }
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true
     }));
   }
 }
@@ -347,183 +649,3 @@ window.customCards.push({
   description: "Shows a Germany/world situation overview with alerts and top headlines.",
   preview: true
 });
-
-const style = document.createElement("style");
-style.textContent = `
-  :host {
-    display: block;
-  }
-  .wrapper {
-    padding: 16px;
-  }
-  .score-row {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  .score-row.three {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .score-block {
-    background: var(--ha-card-background, rgba(255,255,255,0.04));
-    border: 1px solid var(--divider-color);
-    border-radius: 16px;
-    padding: 12px;
-  }
-  .score-block.hero {
-    padding: 16px;
-  }
-  .score-block.compact {
-    padding: 10px 12px;
-  }
-  .label {
-    color: var(--secondary-text-color);
-    font-size: 0.8rem;
-    margin-bottom: 4px;
-  }
-  .value {
-    font-size: 1.8rem;
-    font-weight: 700;
-    line-height: 1.1;
-  }
-  .value.small {
-    font-size: 1.3rem;
-  }
-  .section {
-    margin-top: 16px;
-  }
-  .section-title {
-    font-weight: 700;
-    margin-bottom: 10px;
-  }
-  .item, .alert-item {
-    border-top: 1px solid var(--divider-color);
-    padding: 10px 0;
-  }
-  .item-top {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    margin-bottom: 4px;
-  }
-  .badge {
-    background: #b42318;
-    color: white;
-    border-radius: 999px;
-    padding: 2px 8px;
-    font-size: 0.75rem;
-  }
-  .source {
-    color: var(--secondary-text-color);
-    font-size: 0.8rem;
-    text-transform: uppercase;
-  }
-  .summary {
-    color: var(--secondary-text-color);
-    font-size: 0.9rem;
-    margin-top: 4px;
-  }
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  #map {
-    border-radius: 16px;
-    overflow: hidden;
-    border: 1px solid var(--divider-color);
-    background: #eef4fb;
-  }
-  .map-note {
-    color: var(--secondary-text-color);
-    font-size: 0.8rem;
-    margin-top: 8px;
-  }
-  .chip {
-    border: 1px solid var(--divider-color);
-    border-radius: 999px;
-    padding: 4px 10px;
-    font-size: 0.8rem;
-  }
-  .empty {
-    color: var(--secondary-text-color);
-  }
-  .editor {
-    display: grid;
-    gap: 12px;
-    padding: 8px 0 16px;
-  }
-  .editor-section {
-    border: 1px solid var(--divider-color);
-    border-radius: 16px;
-    padding: 12px;
-    background: var(--card-background-color);
-  }
-  .editor-title {
-    font-weight: 700;
-    margin-bottom: 10px;
-  }
-  .editor-help {
-    color: var(--secondary-text-color);
-    font-size: 0.82rem;
-    margin-bottom: 12px;
-    line-height: 1.4;
-  }
-  .editor-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
-  .editor-grid.single {
-    grid-template-columns: 1fr;
-  }
-  .editor-row {
-    display: grid;
-    gap: 4px;
-  }
-  .editor-label {
-    font-size: 0.9rem;
-    font-weight: 600;
-  }
-  .editor-toggle-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
-    margin-top: 12px;
-  }
-  .editor-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border: 1px solid var(--divider-color);
-    border-radius: 12px;
-  }
-  .editor input[type="text"],
-  .editor input[type="number"] {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 10px 12px;
-    border-radius: 12px;
-    border: 1px solid var(--divider-color);
-    background: var(--card-background-color);
-    color: var(--primary-text-color);
-  }
-  @media (max-width: 640px) {
-    .score-row,
-    .score-row.three,
-    .editor-grid {
-      grid-template-columns: 1fr;
-    }
-    .wrapper {
-      padding: 14px;
-    }
-  }
-`;
-
-if (!document.head.querySelector('style[data-lage-monitor-style="1"]')) {
-  style.dataset.lageMonitorStyle = "1";
-  document.head.appendChild(style);
-}
