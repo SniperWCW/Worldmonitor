@@ -1,10 +1,6 @@
+const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 const DEFAULT_CENTER = [51.1657, 10.4515];
-const GERMANY_BOUNDS = {
-  north: 55.1,
-  south: 47.2,
-  west: 5.5,
-  east: 15.6
-};
 const ENTITY_CANDIDATES = {
   entity: ["sensor.germany_score", "sensor.deutschland_lage_score"],
   alerts_entity: ["sensor.active_alerts", "sensor.aktive_warnungen"],
@@ -197,64 +193,14 @@ const CARD_STYLE = `
     border-radius: 16px;
     overflow: hidden;
     border: 1px solid rgba(148, 163, 184, 0.2);
-    background:
-      linear-gradient(180deg, rgba(191, 219, 254, 0.55), rgba(226, 232, 240, 0.88)),
-      radial-gradient(circle at 20% 18%, rgba(37, 99, 235, 0.16), transparent 28%);
+    background: rgba(226, 232, 240, 0.65);
     position: relative;
   }
-  .map-frame {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    min-height: inherit;
-    background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.28) 1px, transparent 1px),
-      linear-gradient(rgba(255, 255, 255, 0.28) 1px, transparent 1px);
-    background-size: 36px 36px;
-  }
-  .map-shape {
-    position: absolute;
-    inset: 10% 18% 8%;
-    border-radius: 48% 42% 44% 40% / 26% 30% 42% 34%;
-    background:
-      linear-gradient(180deg, rgba(148, 163, 184, 0.24), rgba(148, 163, 184, 0.16)),
-      rgba(255, 255, 255, 0.36);
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  }
-  .map-label {
-    position: absolute;
-    top: 14px;
-    left: 16px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: rgba(15, 23, 42, 0.56);
-  }
-  .map-marker {
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    border-radius: 999px;
-    border: 2px solid rgba(255, 255, 255, 0.95);
-    background: linear-gradient(135deg, #dc2626, #f97316);
-    box-shadow: 0 8px 18px rgba(220, 38, 38, 0.24);
-    transform: translate(-50%, -50%);
-  }
-  .map-marker.secondary {
-    background: linear-gradient(135deg, #2563eb, #38bdf8);
-    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.24);
-  }
-  .map-empty {
-    position: absolute;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    padding: 18px;
-    text-align: center;
+  .map-status {
+    margin-top: 10px;
     color: var(--secondary-text-color);
-    font-size: 0.9rem;
+    font-size: 0.82rem;
+    line-height: 1.4;
   }
   .panel.collapsible {
     overflow: hidden;
@@ -275,6 +221,20 @@ const CARD_STYLE = `
   }
   .panel.collapsible.collapsed .panel-head.toggle::after {
     transform: rotate(-90deg);
+  }
+  .leaflet-container {
+    font: inherit;
+    background: rgba(226, 232, 240, 0.65);
+  }
+  .leaflet-popup-content-wrapper,
+  .leaflet-popup-tip {
+    background: rgba(15, 23, 42, 0.92);
+    color: #fff;
+  }
+  .leaflet-popup-content {
+    margin: 10px 12px;
+    line-height: 1.4;
+    font-size: 0.84rem;
   }
   .count-pill {
     min-width: 1.9rem;
@@ -368,6 +328,41 @@ const CARD_STYLE = `
   }
 `;
 
+let leafletLoader;
+
+function ensureLeaflet() {
+  if (window.L) {
+    return Promise.resolve(window.L);
+  }
+  if (leafletLoader) {
+    return leafletLoader;
+  }
+
+  leafletLoader = new Promise((resolve, reject) => {
+    if (!document.querySelector(`link[href="${LEAFLET_CSS}"]`)) {
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = LEAFLET_CSS;
+      document.head.appendChild(css);
+    }
+
+    const existingScript = document.querySelector(`script[src="${LEAFLET_JS}"]`);
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(window.L), { once: true });
+      existingScript.addEventListener("error", reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = LEAFLET_JS;
+    script.onload = () => resolve(window.L);
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+
+  return leafletLoader;
+}
+
 function resolveEntityId(hass, explicitValue, candidates) {
   if (explicitValue && hass.states[explicitValue]) {
     return explicitValue;
@@ -449,10 +444,6 @@ function getHomeCenter(hass) {
   return DEFAULT_CENTER;
 }
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
 function toNumberOrNull(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -478,11 +469,9 @@ function buildMapPoints(markers, homeCenter) {
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
       continue;
     }
-    const top = clamp(((GERMANY_BOUNDS.north - lat) / (GERMANY_BOUNDS.north - GERMANY_BOUNDS.south)) * 100, 6, 94);
-    const left = clamp(((lon - GERMANY_BOUNDS.west) / (GERMANY_BOUNDS.east - GERMANY_BOUNDS.west)) * 100, 6, 94);
     points.push({
-      top,
-      left,
+      latitude: lat,
+      longitude: lon,
       title: marker.title || "Warnung",
       source: marker.source || "",
       severity: marker.severity || "",
@@ -493,8 +482,8 @@ function buildMapPoints(markers, homeCenter) {
   if (!points.length && Array.isArray(homeCenter) && homeCenter.length === 2) {
     const [lat, lon] = homeCenter;
     points.push({
-      top: clamp(((GERMANY_BOUNDS.north - lat) / (GERMANY_BOUNDS.north - GERMANY_BOUNDS.south)) * 100, 6, 94),
-      left: clamp(((lon - GERMANY_BOUNDS.west) / (GERMANY_BOUNDS.east - GERMANY_BOUNDS.west)) * 100, 6, 94),
+      latitude: lat,
+      longitude: lon,
       title: "Home-Position",
       source: "fallback",
       severity: "Keine geokodierten Warnungen",
@@ -503,6 +492,10 @@ function buildMapPoints(markers, homeCenter) {
   }
 
   return points;
+}
+
+function getRealMarkerCount(points) {
+  return points.filter((point) => point.variant !== "secondary").length;
 }
 
 function renderCollapsiblePanel(panelKey, title, countLabel, content, open = false) {
@@ -536,6 +529,7 @@ class LageMonitorCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    this._restorePanelState();
     const config = mergeConfigWithDefaults(hass, this._config || DEFAULT_CONFIG);
     const stateObj = hass.states[config.entity];
     if (!stateObj) {
@@ -555,13 +549,10 @@ class LageMonitorCard extends HTMLElement {
     const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
     const homeCenter = getHomeCenter(hass);
     const mapPoints = buildMapPoints(markers, homeCenter);
-    const mapMarkup = mapPoints.length ? mapPoints.map((point) => `
-      <div
-        class="map-marker ${point.variant}"
-        style="top:${point.top}%;left:${point.left}%"
-        title="${[point.title, point.source, point.severity].filter(Boolean).join(" | ")}"
-      ></div>
-    `).join("") : `<div class="map-empty">Noch keine geokodierten Warnungen verfuegbar.</div>`;
+    const realMarkerCount = getRealMarkerCount(mapPoints);
+    const mapStatus = realMarkerCount > 0
+      ? `${realMarkerCount} geokodierte Meldung${realMarkerCount === 1 ? "" : "en"} auf der Karte.`
+      : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder Ereignisse vor.";
 
     this.shadowRoot.innerHTML = `
       <style>${CARD_STYLE}</style>
@@ -596,16 +587,11 @@ class LageMonitorCard extends HTMLElement {
               <div class="panel">
                 <div class="panel-head">
                   <div class="panel-title">Lagekarte</div>
-                  <div class="panel-note">${mapPoints.length} Marker</div>
+                  <div class="panel-note">${realMarkerCount > 0 ? `${realMarkerCount} Marker` : "Fallback"}</div>
                 </div>
                 <div class="panel-body">
-                  <div id="map" style="min-height:${Number(config.map_height) || 320}px">
-                    <div class="map-frame" style="min-height:${Number(config.map_height) || 320}px">
-                      <div class="map-shape"></div>
-                      <div class="map-label">Deutschland Uebersicht</div>
-                      ${mapMarkup}
-                    </div>
-                  </div>
+                  <div id="map" style="min-height:${Number(config.map_height) || 320}px"></div>
+                  <div class="map-status">${mapStatus}</div>
                 </div>
               </div>
             ` : ""}
@@ -684,6 +670,11 @@ class LageMonitorCard extends HTMLElement {
       </ha-card>
     `;
     this._bindPanelToggles();
+    if (config.show_map) {
+      this._renderMap(mapPoints, homeCenter, config.zoom);
+    } else {
+      this._teardownMap();
+    }
   }
 
   getCardSize() {
@@ -697,9 +688,127 @@ class LageMonitorCard extends HTMLElement {
         event.stopPropagation();
         const key = button.dataset.panelKey;
         this._panelState[key] = !this._panelState[key];
+        this._persistPanelState();
         this.hass = this._hass;
       });
     });
+  }
+
+  async _renderMap(points, homeCenter, zoom) {
+    const mapRoot = this.shadowRoot.getElementById("map");
+    if (!mapRoot) {
+      return;
+    }
+
+    try {
+      const L = await ensureLeaflet();
+      if (this._map) {
+        this._teardownMap();
+      }
+
+      this._map = L.map(mapRoot, {
+        zoomControl: true,
+        attributionControl: true,
+        scrollWheelZoom: false
+      });
+      this._mapLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 18
+      }).addTo(this._map);
+
+      const bounds = [];
+      for (const point of points) {
+        const lat = Number(point.latitude);
+        const lon = Number(point.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          continue;
+        }
+        const color = point.variant === "secondary" ? "#2563eb" : "#dc2626";
+        const fillColor = point.variant === "secondary" ? "#38bdf8" : "#f97316";
+        L.circleMarker([lat, lon], {
+          radius: point.variant === "secondary" ? 8 : 7,
+          color,
+          weight: 2,
+          fillColor,
+          fillOpacity: 0.88
+        }).addTo(this._map).bindPopup(`
+          <strong>${point.title}</strong><br>
+          ${point.source || ""}<br>
+          ${point.severity || ""}
+        `);
+        bounds.push([lat, lon]);
+      }
+
+      if (bounds.length > 1) {
+        this._map.fitBounds(bounds, { padding: [24, 24] });
+      } else if (bounds.length === 1) {
+        this._map.setView(bounds[0], zoom || 6);
+      } else {
+        this._map.setView(homeCenter, zoom || 6);
+      }
+
+      requestAnimationFrame(() => {
+        if (this._map) {
+          this._map.invalidateSize();
+        }
+      });
+      window.setTimeout(() => {
+        if (this._map) {
+          this._map.invalidateSize();
+        }
+      }, 250);
+
+      if (typeof ResizeObserver !== "undefined") {
+        this._mapResizeObserver = new ResizeObserver(() => {
+          if (this._map) {
+            this._map.invalidateSize();
+          }
+        });
+        this._mapResizeObserver.observe(mapRoot);
+      }
+    } catch (_) {
+      mapRoot.innerHTML = `<div class="empty" style="padding:16px">Karte konnte derzeit nicht geladen werden.</div>`;
+    }
+  }
+
+  _teardownMap() {
+    if (this._mapResizeObserver) {
+      this._mapResizeObserver.disconnect();
+      this._mapResizeObserver = null;
+    }
+    if (this._map) {
+      this._map.remove();
+      this._map = null;
+    }
+  }
+
+  _getPanelStorageKey() {
+    const config = this._config || DEFAULT_CONFIG;
+    return `lage-monitor-card:${config.entity || "default"}:${config.title || "Lage Monitor"}:panels`;
+  }
+
+  _restorePanelState() {
+    try {
+      const raw = window.localStorage.getItem(this._getPanelStorageKey());
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      this._panelState = {
+        ...this._panelState,
+        ...parsed
+      };
+    } catch (_) {
+      // Ignore broken persisted panel state and keep defaults.
+    }
+  }
+
+  _persistPanelState() {
+    try {
+      window.localStorage.setItem(this._getPanelStorageKey(), JSON.stringify(this._panelState));
+    } catch (_) {
+      // Ignore storage failures; collapsible panels still work for this session.
+    }
   }
 
   static getConfigElement() {
