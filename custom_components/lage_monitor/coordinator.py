@@ -14,6 +14,7 @@ from urllib.parse import quote
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ALERT_RADIUS_KM,
@@ -98,6 +99,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     async def _build_snapshot(self) -> LageSnapshot:
         headlines: list[FeedItem] = []
         alerts: list[dict] = []
+        all_nina_alerts: list[dict] = []
         source_status: dict[str, dict] = {}
 
         news_limit = self.entry.options.get(CONF_NEWS_LIMIT, self.entry.data[CONF_NEWS_LIMIT])
@@ -130,13 +132,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         if self.entry.options.get(CONF_INCLUDE_POLICE, self.entry.data[CONF_INCLUDE_POLICE]):
             nina_alerts, nina_status = await self._safe_fetch_nina_alerts(configured_ars)
+            all_nina_alerts = nina_alerts
             alerts.extend(
                 self._filter_alerts_by_radius(nina_alerts, home_center, alert_radius_km, focus_mode)
             )
             source_status["nina"] = nina_status
 
         if self.entry.options.get(CONF_INCLUDE_PRESS, self.entry.data[CONF_INCLUDE_PRESS]):
-            for source, url in PRESSEPORTAL_FEEDS.items():
+            for source, url in self._iter_press_feeds(focus_mode):
                 items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
                 headlines.extend(items)
                 source_status[source] = status
@@ -146,7 +149,10 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 headlines.extend(items)
                 source_status[source] = status
 
-        if self.entry.options.get(CONF_INCLUDE_NEWS, self.entry.data[CONF_INCLUDE_NEWS]):
+        if (
+            focus_mode != FOCUS_MODE_LOCAL
+            and self.entry.options.get(CONF_INCLUDE_NEWS, self.entry.data[CONF_INCLUDE_NEWS])
+        ):
             for source, url in GERMAN_NEWS_FEEDS.items():
                 items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
                 headlines.extend(items)
@@ -154,6 +160,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         deduped = self._dedupe_items(headlines)
         scored = [self._score_item(item) for item in deduped]
+        if focus_mode == FOCUS_MODE_LOCAL:
+            scored.extend(self._alerts_to_scored_items(alerts))
         scored = self._apply_focus_filter(scored, focus_mode, local_keywords)
         scored.sort(key=lambda item: item["score"], reverse=True)
 
@@ -195,7 +203,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         for item in scored[:20]:
             keyword_counter.update(item["keywords"])
 
-        map_markers = self._build_markers(alerts, scored[: min(news_limit, 12)])
+        map_markers = self._build_map_markers(all_nina_alerts, home_center)
 
         return LageSnapshot(
             germany_score=germany_score,
@@ -482,43 +490,114 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 points.extend(self._flatten_coordinates(child))
         return points
 
-    def _build_markers(self, alerts: list[dict], headlines: list[dict]) -> list[dict]:
-        """Build marker data for frontend maps."""
+    def _build_map_markers(
+        self,
+        alerts: list[dict],
+        home_center: tuple[float | None, float | None],
+    ) -> list[dict]:
+        """Build nationwide daily map markers plus a home focus marker."""
         markers: list[dict] = []
+        todays_alerts = self._filter_alerts_for_today(alerts)
+        clustered: dict[tuple[float, float], list[dict]] = {}
 
-        for alert in alerts:
+        for alert in todays_alerts:
             lat = alert.get("latitude")
             lon = alert.get("longitude")
             if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
                 continue
+            key = (round(float(lat) / 0.35) * 0.35, round(float(lon) / 0.5) * 0.5)
+            clustered.setdefault(key, []).append(alert)
+
+        for (lat, lon), cluster_alerts in clustered.items():
+            top_titles = [item.get("title") or "Warnung" for item in cluster_alerts[:3]]
+            sources = sorted({str(item.get("source") or "") for item in cluster_alerts if item.get("source")})
             markers.append(
                 {
-                    "kind": "alert",
-                    "title": alert.get("title") or "Warnung",
-                    "source": alert.get("source"),
-                    "severity": alert.get("severity"),
-                    "latitude": float(lat),
-                    "longitude": float(lon),
+                    "kind": "cluster",
+                    "title": top_titles[0],
+                    "source": ", ".join(sources[:3]),
+                    "severity": f"{len(cluster_alerts)} Meldungen heute",
+                    "latitude": round(lat, 5),
+                    "longitude": round(lon, 5),
+                    "count": len(cluster_alerts),
+                    "titles": top_titles,
                 }
             )
 
-        for headline in headlines:
-            lat = headline.get("latitude")
-            lon = headline.get("longitude")
-            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
-                continue
+        home_lat, home_lon = home_center
+        if isinstance(home_lat, (int, float)) and isinstance(home_lon, (int, float)):
             markers.append(
                 {
-                    "kind": "headline",
-                    "title": headline.get("title"),
-                    "source": headline.get("source"),
-                    "severity": headline.get("score"),
-                    "latitude": float(lat),
-                    "longitude": float(lon),
+                    "kind": "home",
+                    "title": "Home",
+                    "source": "zone.home",
+                    "severity": "Home Assistant Fokus",
+                    "latitude": float(home_lat),
+                    "longitude": float(home_lon),
+                    "count": 1,
                 }
             )
 
+        markers.sort(key=lambda item: (item.get("kind") == "home", item.get("count", 0)), reverse=True)
         return markers
+
+    def _filter_alerts_for_today(self, alerts: list[dict]) -> list[dict]:
+        """Keep only alerts from today in the Home Assistant timezone when possible."""
+        today = dt_util.now().date()
+        filtered: list[dict] = []
+        for alert in alerts:
+            sent = alert.get("sent")
+            if not sent:
+                filtered.append(alert)
+                continue
+            parsed = dt_util.parse_datetime(str(sent))
+            if parsed is None:
+                filtered.append(alert)
+                continue
+            local_dt = dt_util.as_local(parsed)
+            if local_dt.date() == today:
+                filtered.append(alert)
+        return filtered
+
+    def _alerts_to_scored_items(self, alerts: list[dict]) -> list[dict]:
+        """Convert local alerts into headline-style items for the top list."""
+        items: list[dict] = []
+        for alert in alerts:
+            title = str(alert.get("title") or "Warnung")
+            source = str(alert.get("source") or "nina")
+            severity = str(alert.get("severity") or "")
+            score = 10
+            if source == "police":
+                score = 14
+            elif source == "dwd":
+                score = 12
+            elif source == "mowas":
+                score = 15
+            items.append(
+                {
+                    "title": title,
+                    "link": alert.get("link") or "",
+                    "summary": severity or f"{source} im Umkreis von Home",
+                    "published": str(alert.get("sent") or ""),
+                    "source": source,
+                    "score": score,
+                    "keywords": [],
+                    "military_keywords": [],
+                    "military_score": 0,
+                    "region": "de",
+                    "latitude": alert.get("latitude"),
+                    "longitude": alert.get("longitude"),
+                }
+            )
+        return items
+
+    def _iter_press_feeds(self, focus_mode: str) -> Iterable[tuple[str, str]]:
+        """Return the press feeds relevant for the selected mode."""
+        if focus_mode == FOCUS_MODE_LOCAL:
+            if "presseportal_blaulicht" in PRESSEPORTAL_FEEDS:
+                yield "presseportal_blaulicht", PRESSEPORTAL_FEEDS["presseportal_blaulicht"]
+            return
+        yield from PRESSEPORTAL_FEEDS.items()
 
     def _parse_csv(self, value: str) -> list[str]:
         """Parse a comma-separated option into normalized values."""

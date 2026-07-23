@@ -475,11 +475,14 @@ function buildMapPoints(markers, homeCenter) {
       title: marker.title || "Warnung",
       source: marker.source || "",
       severity: marker.severity || "",
-      variant: marker.source === "fallback" ? "secondary" : ""
+      count: Number(marker.count) || 1,
+      kind: marker.kind || "cluster",
+      titles: Array.isArray(marker.titles) ? marker.titles : [],
+      variant: marker.kind === "home" ? "secondary" : ""
     });
   }
 
-  if (!points.length && Array.isArray(homeCenter) && homeCenter.length === 2) {
+  if (!points.some((point) => point.kind === "home") && Array.isArray(homeCenter) && homeCenter.length === 2) {
     const [lat, lon] = homeCenter;
     points.push({
       latitude: lat,
@@ -487,6 +490,9 @@ function buildMapPoints(markers, homeCenter) {
       title: "Home-Position",
       source: "fallback",
       severity: "Keine geokodierten Warnungen",
+      count: 1,
+      kind: "home",
+      titles: [],
       variant: "secondary"
     });
   }
@@ -495,7 +501,7 @@ function buildMapPoints(markers, homeCenter) {
 }
 
 function getRealMarkerCount(points) {
-  return points.filter((point) => point.variant !== "secondary").length;
+  return points.filter((point) => point.kind !== "home").length;
 }
 
 function renderCollapsiblePanel(panelKey, title, countLabel, content, open = false) {
@@ -551,7 +557,7 @@ class LageMonitorCard extends HTMLElement {
     const mapPoints = buildMapPoints(markers, homeCenter);
     const realMarkerCount = getRealMarkerCount(mapPoints);
     const mapStatus = realMarkerCount > 0
-      ? `${realMarkerCount} geokodierte Meldung${realMarkerCount === 1 ? "" : "en"} auf der Karte.`
+      ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus heutigen deutschlandweiten Meldungen.`
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder Ereignisse vor.";
 
     this.shadowRoot.innerHTML = `
@@ -723,26 +729,40 @@ class LageMonitorCard extends HTMLElement {
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
           continue;
         }
-        const color = point.variant === "secondary" ? "#2563eb" : "#dc2626";
-        const fillColor = point.variant === "secondary" ? "#38bdf8" : "#f97316";
+        if (point.kind === "home") {
+          L.marker([lat, lon]).addTo(this._map).bindPopup(`
+            <strong>Home</strong><br>
+            ${point.severity || "Home Assistant Fokus"}
+          `);
+          bounds.push([lat, lon]);
+          continue;
+        }
+
+        const radius = Math.min(22, 7 + Math.sqrt(Math.max(1, point.count || 1)) * 3.5);
+        const titles = point.titles?.length
+          ? `<br>${point.titles.slice(0, 3).join("<br>")}`
+          : "";
         L.circleMarker([lat, lon], {
-          radius: point.variant === "secondary" ? 8 : 7,
-          color,
+          radius,
+          color: "#b91c1c",
           weight: 2,
-          fillColor,
-          fillOpacity: 0.88
+          fillColor: "#f97316",
+          fillOpacity: 0.78
         }).addTo(this._map).bindPopup(`
-          <strong>${point.title}</strong><br>
-          ${point.source || ""}<br>
-          ${point.severity || ""}
+          <strong>${point.count} Meldung${point.count === 1 ? "" : "en"} heute</strong><br>
+          ${point.source || ""}
+          ${titles}
         `);
         bounds.push([lat, lon]);
       }
 
+      const homePoint = points.find((point) => point.kind === "home");
       if (bounds.length > 1) {
         this._map.fitBounds(bounds, { padding: [24, 24] });
       } else if (bounds.length === 1) {
         this._map.setView(bounds[0], zoom || 6);
+      } else if (homePoint) {
+        this._map.setView([homePoint.latitude, homePoint.longitude], zoom || 6);
       } else {
         this._map.setView(homeCenter, zoom || 6);
       }
