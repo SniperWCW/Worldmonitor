@@ -190,6 +190,7 @@ const CARD_STYLE = `
     font-size: 0.92rem;
   }
   #map {
+    height: var(--lage-monitor-map-height, 320px);
     border-radius: 16px;
     overflow: hidden;
     border: 1px solid rgba(148, 163, 184, 0.2);
@@ -527,6 +528,8 @@ class LageMonitorCard extends HTMLElement {
       alerts: false,
       military: false
     };
+    this._lastMarkup = "";
+    this._lastMapSignature = "";
   }
 
   setConfig(config) {
@@ -560,7 +563,7 @@ class LageMonitorCard extends HTMLElement {
       ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus heutigen deutschlandweiten Meldungen.`
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder Ereignisse vor.";
 
-    this.shadowRoot.innerHTML = `
+    const markup = `
       <style>${CARD_STYLE}</style>
       <ha-card>
         <div class="shell">
@@ -596,7 +599,7 @@ class LageMonitorCard extends HTMLElement {
                   <div class="panel-note">${realMarkerCount > 0 ? `${realMarkerCount} Marker` : "Fallback"}</div>
                 </div>
                 <div class="panel-body">
-                  <div id="map" style="min-height:${Number(config.map_height) || 320}px"></div>
+                  <div id="map" style="height:${Number(config.map_height) || 320}px; --lage-monitor-map-height:${Number(config.map_height) || 320}px"></div>
                   <div class="map-status">${mapStatus}</div>
                 </div>
               </div>
@@ -675,11 +678,35 @@ class LageMonitorCard extends HTMLElement {
         </div>
       </ha-card>
     `;
-    this._bindPanelToggles();
-    if (config.show_map) {
+    const mapSignature = JSON.stringify({
+      zoom: Number(config.zoom) || 6,
+      homeCenter,
+      points: mapPoints.map((point) => ({
+        latitude: Number(point.latitude),
+        longitude: Number(point.longitude),
+        kind: point.kind || "",
+        count: Number(point.count) || 0,
+        source: point.source || "",
+        severity: point.severity || "",
+        titles: Array.isArray(point.titles) ? point.titles.slice(0, 3) : []
+      }))
+    });
+    const markupChanged = this._lastMarkup !== markup;
+
+    if (markupChanged) {
+      this.shadowRoot.innerHTML = markup;
+      this._lastMarkup = markup;
+      this._bindPanelToggles();
+    }
+
+    if (config.show_map && (markupChanged || !this._map || this._lastMapSignature !== mapSignature)) {
       this._renderMap(mapPoints, homeCenter, config.zoom);
+      this._lastMapSignature = mapSignature;
+    } else if (config.show_map) {
+      this._refreshMapSize();
     } else {
       this._teardownMap();
+      this._lastMapSignature = "";
     }
   }
 
@@ -767,22 +794,11 @@ class LageMonitorCard extends HTMLElement {
         this._map.setView(homeCenter, zoom || 6);
       }
 
-      requestAnimationFrame(() => {
-        if (this._map) {
-          this._map.invalidateSize();
-        }
-      });
-      window.setTimeout(() => {
-        if (this._map) {
-          this._map.invalidateSize();
-        }
-      }, 250);
+      this._refreshMapSize();
 
       if (typeof ResizeObserver !== "undefined") {
         this._mapResizeObserver = new ResizeObserver(() => {
-          if (this._map) {
-            this._map.invalidateSize();
-          }
+          this._refreshMapSize();
         });
         this._mapResizeObserver.observe(mapRoot);
       }
@@ -800,6 +816,19 @@ class LageMonitorCard extends HTMLElement {
       this._map.remove();
       this._map = null;
     }
+  }
+
+  _refreshMapSize() {
+    requestAnimationFrame(() => {
+      if (this._map) {
+        this._map.invalidateSize(false);
+      }
+    });
+    window.setTimeout(() => {
+      if (this._map) {
+        this._map.invalidateSize(false);
+      }
+    }, 250);
   }
 
   _getPanelStorageKey() {

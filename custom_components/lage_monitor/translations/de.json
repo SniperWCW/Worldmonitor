@@ -10,7 +10,43 @@
           "include_press": "Presseportal-Feeds einbeziehen",
           "include_news": "Große deutsche Nachrichten-RSS-Feeds einbeziehen",
           "news_limit": "Maximale Anzahl sichtbarer Schlagzeilen",
+          "police_count_mode": "Polizeimeldungen zählen",
+          "focus_mode": "Fokusmodus",
+          "local_keywords": "Lokale Schlüsselwörter",
+          "custom_press_feeds": "Zusätzliche Presseportal-Feeds",
+          "alert_radius_km": "Lokaler Radius in Kilometern",
           "scan_interval": "Aktualisierungsintervall in Sekunden"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Optionen",
+        "description": "Legt fest, welche Quellen und Filter der Lage Monitor verwendet.",
+        "data": {
+          "nina_ars": "Optionaler NINA-ARS-Code für regionale Dashboard-Warnungen",
+          "include_police": "NINA- und Polizeiwarnungen einbeziehen",
+          "include_press": "Presseportal-Feeds einbeziehen",
+          "include_news": "Große deutsche Nachrichten-RSS-Feeds einbeziehen",
+          "news_limit": "Maximale Anzahl sichtbarer Schlagzeilen",
+          "police_count_mode": "Polizeimeldungen zählen",
+          "focus_mode": "Fokusmodus",
+          "local_keywords": "Lokale Schlüsselwörter",
+          "custom_press_feeds": "Zusätzliche Presseportal-Feeds",
+          "alert_radius_km": "Lokaler Radius in Kilometern",
+          "scan_interval": "Aktualisierungsintervall in Sekunden"
+        },
+        "data_description": {
+          "nina_ars": "Leer lassen, wenn keine regionale NINA-Zuordnung verwendet werden soll.",
+          "news_limit": "Wie viele Schlagzeilen maximal in die Lagebewertung und Karte einfließen.",
+          "police_count_mode": "Wählt zwischen allen Polizeimeldungen und nur lokal relevanten Einträgen.",
+          "focus_mode": "Deutschlandweit nutzt alle Datenquellen, lokal filtert stärker anhand der Schlüsselwörter und des Radius.",
+          "local_keywords": "Kommagetrennte Orte oder Regionen, zum Beispiel Stuttgart, Leonberg, Weilimdorf.",
+          "custom_press_feeds": "Kommagetrennte zusätzliche Feed-URLs; optional.",
+          "alert_radius_km": "Radius für lokale Relevanzbewertung rund um die Home-Position.",
+          "scan_interval": "Wie oft die Quellen neu abgerufen werden."
         }
       }
     }

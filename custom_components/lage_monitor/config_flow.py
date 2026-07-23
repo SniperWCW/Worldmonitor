@@ -60,11 +60,21 @@ def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Optional(
                 CONF_POLICE_COUNT_MODE,
                 default=defaults.get(CONF_POLICE_COUNT_MODE, DEFAULT_POLICE_COUNT_MODE),
-            ): vol.In(["all", "relevant"]),
+            ): vol.In(
+                {
+                    "all": "Alle Meldungen",
+                    "relevant": "Nur relevante Meldungen",
+                }
+            ),
             vol.Optional(
                 CONF_FOCUS_MODE,
                 default=defaults.get(CONF_FOCUS_MODE, DEFAULT_FOCUS_MODE),
-            ): vol.In(["germany", "local"]),
+            ): vol.In(
+                {
+                    "germany": "Deutschlandweit",
+                    "local": "Lokal",
+                }
+            ),
             vol.Optional(
                 CONF_LOCAL_KEYWORDS,
                 default=defaults.get(CONF_LOCAL_KEYWORDS, DEFAULT_LOCAL_KEYWORDS),
