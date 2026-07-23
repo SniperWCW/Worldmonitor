@@ -1,6 +1,10 @@
-const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 const DEFAULT_CENTER = [51.1657, 10.4515];
+const GERMANY_BOUNDS = {
+  north: 55.1,
+  south: 47.2,
+  west: 5.5,
+  east: 15.6
+};
 const ENTITY_CANDIDATES = {
   entity: ["sensor.germany_score", "sensor.deutschland_lage_score"],
   alerts_entity: ["sensor.active_alerts", "sensor.aktive_warnungen"],
@@ -124,6 +128,9 @@ const CARD_STYLE = `
   .panel-body {
     padding: 0 16px 16px;
   }
+  .panel-body.tight {
+    padding-top: 6px;
+  }
   .items {
     display: grid;
     gap: 12px;
@@ -190,7 +197,92 @@ const CARD_STYLE = `
     border-radius: 16px;
     overflow: hidden;
     border: 1px solid rgba(148, 163, 184, 0.2);
-    background: #eef4fb;
+    background:
+      linear-gradient(180deg, rgba(191, 219, 254, 0.55), rgba(226, 232, 240, 0.88)),
+      radial-gradient(circle at 20% 18%, rgba(37, 99, 235, 0.16), transparent 28%);
+    position: relative;
+  }
+  .map-frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: inherit;
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.28) 1px, transparent 1px),
+      linear-gradient(rgba(255, 255, 255, 0.28) 1px, transparent 1px);
+    background-size: 36px 36px;
+  }
+  .map-shape {
+    position: absolute;
+    inset: 10% 18% 8%;
+    border-radius: 48% 42% 44% 40% / 26% 30% 42% 34%;
+    background:
+      linear-gradient(180deg, rgba(148, 163, 184, 0.24), rgba(148, 163, 184, 0.16)),
+      rgba(255, 255, 255, 0.36);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+  .map-label {
+    position: absolute;
+    top: 14px;
+    left: 16px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(15, 23, 42, 0.56);
+  }
+  .map-marker {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.95);
+    background: linear-gradient(135deg, #dc2626, #f97316);
+    box-shadow: 0 8px 18px rgba(220, 38, 38, 0.24);
+    transform: translate(-50%, -50%);
+  }
+  .map-marker.secondary {
+    background: linear-gradient(135deg, #2563eb, #38bdf8);
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.24);
+  }
+  .map-empty {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    text-align: center;
+    color: var(--secondary-text-color);
+    font-size: 0.9rem;
+  }
+  details.panel {
+    overflow: hidden;
+  }
+  details.panel > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  details.panel > summary::-webkit-details-marker {
+    display: none;
+  }
+  .panel-head.toggle::after {
+    content: "▾";
+    font-size: 0.92rem;
+    color: var(--secondary-text-color);
+    transition: transform 0.18s ease;
+  }
+  details.panel:not([open]) .panel-head.toggle::after {
+    transform: rotate(-90deg);
+  }
+  .count-pill {
+    min-width: 1.9rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.08);
+    color: var(--secondary-text-color);
+    font-size: 0.76rem;
+    text-align: center;
   }
   .editor {
     display: grid;
@@ -275,34 +367,6 @@ const CARD_STYLE = `
   }
 `;
 
-let leafletLoader;
-
-function ensureLeaflet() {
-  if (window.L) {
-    return Promise.resolve(window.L);
-  }
-  if (leafletLoader) {
-    return leafletLoader;
-  }
-
-  leafletLoader = new Promise((resolve, reject) => {
-    if (!document.querySelector(`link[href="${LEAFLET_CSS}"]`)) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = LEAFLET_CSS;
-      document.head.appendChild(css);
-    }
-
-    const script = document.createElement("script");
-    script.src = LEAFLET_JS;
-    script.onload = () => resolve(window.L);
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
-
-  return leafletLoader;
-}
-
 function resolveEntityId(hass, explicitValue, candidates) {
   if (explicitValue && hass.states[explicitValue]) {
     return explicitValue;
@@ -336,6 +400,76 @@ function getHomeCenter(hass) {
   return DEFAULT_CENTER;
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function toNumberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolveAlertCount(rawState, alertItems) {
+  const attributeCount = Array.isArray(alertItems) ? alertItems.length : 0;
+  const entityCount = toNumberOrNull(rawState);
+  if (entityCount === null) {
+    return attributeCount;
+  }
+  if (entityCount === 0 && attributeCount > 0) {
+    return attributeCount;
+  }
+  return entityCount;
+}
+
+function buildMapPoints(markers, homeCenter) {
+  const points = [];
+  for (const marker of markers) {
+    const lat = Number(marker.latitude);
+    const lon = Number(marker.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      continue;
+    }
+    const top = clamp(((GERMANY_BOUNDS.north - lat) / (GERMANY_BOUNDS.north - GERMANY_BOUNDS.south)) * 100, 6, 94);
+    const left = clamp(((lon - GERMANY_BOUNDS.west) / (GERMANY_BOUNDS.east - GERMANY_BOUNDS.west)) * 100, 6, 94);
+    points.push({
+      top,
+      left,
+      title: marker.title || "Warnung",
+      source: marker.source || "",
+      severity: marker.severity || "",
+      variant: marker.source === "fallback" ? "secondary" : ""
+    });
+  }
+
+  if (!points.length && Array.isArray(homeCenter) && homeCenter.length === 2) {
+    const [lat, lon] = homeCenter;
+    points.push({
+      top: clamp(((GERMANY_BOUNDS.north - lat) / (GERMANY_BOUNDS.north - GERMANY_BOUNDS.south)) * 100, 6, 94),
+      left: clamp(((lon - GERMANY_BOUNDS.west) / (GERMANY_BOUNDS.east - GERMANY_BOUNDS.west)) * 100, 6, 94),
+      title: "Home-Position",
+      source: "fallback",
+      severity: "Keine geokodierten Warnungen",
+      variant: "secondary"
+    });
+  }
+
+  return points;
+}
+
+function renderCollapsiblePanel(title, countLabel, content, open = false) {
+  return `
+    <details class="panel" ${open ? "open" : ""}>
+      <summary>
+        <div class="panel-head toggle">
+          <div class="panel-title">${title}</div>
+          <div class="panel-note"><span class="count-pill">${countLabel}</span></div>
+        </div>
+      </summary>
+      <div class="panel-body tight">${content}</div>
+    </details>
+  `;
+}
+
 class LageMonitorCard extends HTMLElement {
   constructor() {
     super();
@@ -356,13 +490,23 @@ class LageMonitorCard extends HTMLElement {
 
     const attrs = stateObj.attributes;
     const headlines = (attrs.headlines || []).slice(0, config.limit);
-    const alerts = (attrs.alerts || []).slice(0, 4);
+    const alertItems = attrs.alerts || [];
+    const alerts = alertItems.slice(0, 10);
     const keywords = (attrs.top_keywords || []).slice(0, 6);
     const markers = attrs.map_markers || [];
-    const militaryItems = (attrs.military_items || []).slice(0, 4);
+    const militaryItems = (attrs.military_items || []).slice(0, 10);
     const stability = hass.states[config.stability_entity]?.state ?? "-";
     const military = hass.states[config.military_entity]?.state ?? "-";
-    const activeAlerts = hass.states[config.alerts_entity]?.state || alerts.length;
+    const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
+    const homeCenter = getHomeCenter(hass);
+    const mapPoints = buildMapPoints(markers, homeCenter);
+    const mapMarkup = mapPoints.length ? mapPoints.map((point) => `
+      <div
+        class="map-marker ${point.variant}"
+        style="top:${point.top}%;left:${point.left}%"
+        title="${[point.title, point.source, point.severity].filter(Boolean).join(" | ")}"
+      ></div>
+    `).join("") : `<div class="map-empty">Noch keine geokodierten Warnungen verfuegbar.</div>`;
 
     this.shadowRoot.innerHTML = `
       <style>${CARD_STYLE}</style>
@@ -397,19 +541,23 @@ class LageMonitorCard extends HTMLElement {
               <div class="panel">
                 <div class="panel-head">
                   <div class="panel-title">Lagekarte</div>
-                  <div class="panel-note">${markers.length} Marker</div>
+                  <div class="panel-note">${mapPoints.length} Marker</div>
                 </div>
                 <div class="panel-body">
-                  <div id="map" style="min-height:${Number(config.map_height) || 320}px"></div>
+                  <div id="map" style="min-height:${Number(config.map_height) || 320}px">
+                    <div class="map-frame" style="min-height:${Number(config.map_height) || 320}px">
+                      <div class="map-shape"></div>
+                      <div class="map-label">Deutschland Uebersicht</div>
+                      ${mapMarkup}
+                    </div>
+                  </div>
                 </div>
               </div>
             ` : ""}
-            <div class="panel">
-              <div class="panel-head">
-                <div class="panel-title">Top-Ereignisse</div>
-                <div class="panel-note">${headlines.length} Eintraege</div>
-              </div>
-              <div class="panel-body">
+            ${renderCollapsiblePanel(
+              "Top-Ereignisse",
+              `${headlines.length} Eintraege`,
+              `
                 <div class="items">
                   ${headlines.length ? headlines.map((item) => `
                     <div class="item">
@@ -422,14 +570,12 @@ class LageMonitorCard extends HTMLElement {
                     </div>
                   `).join("") : `<div class="empty">Noch keine Ereignisse verfuegbar</div>`}
                 </div>
-              </div>
-            </div>
-            <div class="panel">
-              <div class="panel-head">
-                <div class="panel-title">Amtliche Warnungen</div>
-                <div class="panel-note">${alerts.length}</div>
-              </div>
-              <div class="panel-body">
+              `
+            )}
+            ${renderCollapsiblePanel(
+              "Amtliche Warnungen",
+              `${activeAlerts}`,
+              `
                 <div class="items">
                   ${alerts.length ? alerts.map((item) => `
                     <div class="item">
@@ -440,14 +586,13 @@ class LageMonitorCard extends HTMLElement {
                     </div>
                   `).join("") : `<div class="empty">Keine Warnungen vorhanden</div>`}
                 </div>
-              </div>
-            </div>
+              `
+            )}
             ${config.show_military ? `
-              <div class="panel">
-                <div class="panel-head">
-                  <div class="panel-title">Militaerische Aktivitaet</div>
-                </div>
-                <div class="panel-body">
+              ${renderCollapsiblePanel(
+                "Militaerische Aktivitaet",
+                `${militaryItems.length}`,
+                `
                   <div class="items">
                     ${militaryItems.length ? militaryItems.map((item) => `
                       <div class="item">
@@ -458,8 +603,8 @@ class LageMonitorCard extends HTMLElement {
                       </div>
                     `).join("") : `<div class="empty">Noch keine militaerischen Signalereignisse erkannt</div>`}
                   </div>
-                </div>
-              </div>
+                `
+              )}
             ` : ""}
             ${config.show_keywords ? `
               <div class="panel">
@@ -478,65 +623,11 @@ class LageMonitorCard extends HTMLElement {
       </ha-card>
     `;
 
-    if (config.show_map) {
-      this._renderMap(hass, markers, config.zoom);
-    }
   }
 
   getCardSize() {
     return 8;
   }
-
-  async _renderMap(hass, markers, zoom) {
-    const mapRoot = this.shadowRoot.getElementById("map");
-    if (!mapRoot) {
-      return;
-    }
-
-    const L = await ensureLeaflet();
-    if (this._map) {
-      this._map.remove();
-      this._map = null;
-    }
-
-    this._map = L.map(mapRoot, { zoomControl: true, attributionControl: true });
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 18
-    }).addTo(this._map);
-
-    const bounds = [];
-    for (const marker of markers) {
-      const lat = Number(marker.latitude);
-      const lon = Number(marker.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        continue;
-      }
-      const leafletMarker = L.marker([lat, lon]).addTo(this._map);
-      leafletMarker.bindPopup(`
-        <strong>${marker.title || "Warnung"}</strong><br>
-        ${marker.source || ""}<br>
-        ${marker.severity || ""}
-      `);
-      bounds.push([lat, lon]);
-    }
-
-    if (bounds.length === 1) {
-      this._map.setView(bounds[0], zoom || 6);
-    } else if (bounds.length > 1) {
-      this._map.fitBounds(bounds, { padding: [24, 24] });
-    } else {
-      const homeCenter = getHomeCenter(hass);
-      this._map.setView(homeCenter, zoom || 6);
-      L.circleMarker(homeCenter, {
-        radius: 8,
-        color: "#2563eb",
-        fillColor: "#60a5fa",
-        fillOpacity: 0.85
-      }).addTo(this._map).bindPopup("Derzeit keine geokodierten Warnungen verfuegbar. Fallback auf Home-Position.");
-    }
-  }
-
   static getConfigElement() {
     return document.createElement("lage-monitor-card-editor");
   }
