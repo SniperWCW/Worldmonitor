@@ -1,5 +1,5 @@
-const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+const LEAFLET_JS = "/lage_monitor_frontend/vendor/leaflet.js";
+const LEAFLET_CSS = "/lage_monitor_frontend/vendor/leaflet.css";
 const DEFAULT_CENTER = [51.1657, 10.4515];
 const ENTITY_CANDIDATES = {
   entity: ["sensor.germany_score", "sensor.deutschland_lage_score"],
@@ -224,8 +224,107 @@ const CARD_STYLE = `
     transform: rotate(-90deg);
   }
   .leaflet-container {
+    overflow: hidden;
+    outline: 0;
     font: inherit;
     background: rgba(226, 232, 240, 0.65);
+  }
+  .leaflet-pane,
+  .leaflet-tile,
+  .leaflet-marker-icon,
+  .leaflet-marker-shadow,
+  .leaflet-tile-container,
+  .leaflet-pane > svg,
+  .leaflet-pane > canvas,
+  .leaflet-zoom-box,
+  .leaflet-image-layer,
+  .leaflet-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+  .leaflet-pane {
+    z-index: 400;
+  }
+  .leaflet-tile-pane {
+    z-index: 200;
+  }
+  .leaflet-overlay-pane {
+    z-index: 400;
+  }
+  .leaflet-shadow-pane {
+    z-index: 500;
+  }
+  .leaflet-marker-pane {
+    z-index: 600;
+  }
+  .leaflet-tooltip-pane {
+    z-index: 650;
+  }
+  .leaflet-popup-pane {
+    z-index: 700;
+  }
+  .leaflet-map-pane,
+  .leaflet-tile-container {
+    width: 100%;
+    height: 100%;
+  }
+  .leaflet-container img,
+  .leaflet-container .leaflet-tile {
+    max-width: none !important;
+    max-height: none !important;
+  }
+  .leaflet-tile {
+    visibility: hidden;
+    display: block;
+  }
+  .leaflet-tile-loaded {
+    visibility: inherit;
+  }
+  .leaflet-zoom-animated {
+    transform-origin: 0 0;
+  }
+  .leaflet-control {
+    position: relative;
+    z-index: 800;
+    pointer-events: auto;
+  }
+  .leaflet-top,
+  .leaflet-bottom {
+    position: absolute;
+    z-index: 1000;
+    pointer-events: none;
+  }
+  .leaflet-top {
+    top: 0;
+  }
+  .leaflet-right {
+    right: 0;
+  }
+  .leaflet-bottom {
+    bottom: 0;
+  }
+  .leaflet-left {
+    left: 0;
+  }
+  .leaflet-control {
+    float: left;
+    clear: both;
+  }
+  .leaflet-right .leaflet-control {
+    float: right;
+  }
+  .leaflet-top .leaflet-control {
+    margin-top: 10px;
+  }
+  .leaflet-bottom .leaflet-control {
+    margin-bottom: 10px;
+  }
+  .leaflet-left .leaflet-control {
+    margin-left: 10px;
+  }
+  .leaflet-right .leaflet-control {
+    margin-right: 10px;
   }
   .leaflet-popup-content-wrapper,
   .leaflet-popup-tip {
@@ -359,6 +458,9 @@ function ensureLeaflet() {
     script.onload = () => resolve(window.L);
     script.onerror = reject;
     document.head.appendChild(script);
+  }).catch((error) => {
+    leafletLoader = null;
+    throw error;
   });
 
   return leafletLoader;
@@ -530,10 +632,25 @@ class LageMonitorCard extends HTMLElement {
     };
     this._lastMarkup = "";
     this._lastMapSignature = "";
+    this._map = null;
+    this._mapLayer = null;
+    this._mapMarkersLayer = null;
+    this._mapResizeObserver = null;
+    this._mapHost = null;
+    this._mapRenderToken = 0;
   }
 
   setConfig(config) {
     this._config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  connectedCallback() {
+    this._mapRenderToken += 1;
+  }
+
+  disconnectedCallback() {
+    this._mapRenderToken += 1;
+    this._teardownMap();
   }
 
   set hass(hass) {
@@ -542,7 +659,8 @@ class LageMonitorCard extends HTMLElement {
     const config = mergeConfigWithDefaults(hass, this._config || DEFAULT_CONFIG);
     const stateObj = hass.states[config.entity];
     if (!stateObj) {
-      this.shadowRoot.innerHTML = `<link rel="stylesheet" href="${LEAFLET_CSS}"><style>${CARD_STYLE}</style><ha-card><div class="shell"><div class="empty">Entity ${config.entity} not found.</div></div></ha-card>`;
+      this._teardownMap();
+      this.shadowRoot.innerHTML = `<style>${CARD_STYLE}</style><ha-card><div class="shell"><div class="empty">Entity ${config.entity} not found.</div></div></ha-card>`;
       return;
     }
 
@@ -564,7 +682,6 @@ class LageMonitorCard extends HTMLElement {
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder Ereignisse vor.";
 
     const markup = `
-      <link rel="stylesheet" href="${LEAFLET_CSS}">
       <style>${CARD_STYLE}</style>
       <ha-card>
         <div class="shell">
@@ -695,6 +812,9 @@ class LageMonitorCard extends HTMLElement {
     const markupChanged = this._lastMarkup !== markup;
 
     if (markupChanged) {
+      if (this._map) {
+        this._teardownMap();
+      }
       this.shadowRoot.innerHTML = markup;
       this._lastMarkup = markup;
       this._bindPanelToggles();
@@ -731,24 +851,46 @@ class LageMonitorCard extends HTMLElement {
   async _renderMap(points, homeCenter, zoom) {
     const mapRoot = this.shadowRoot.getElementById("map");
     if (!mapRoot) {
+      this._teardownMap();
       return;
     }
 
+    const renderToken = ++this._mapRenderToken;
+
     try {
       const L = await ensureLeaflet();
-      if (this._map) {
-        this._teardownMap();
+      if (renderToken !== this._mapRenderToken || !this.isConnected) {
+        return;
       }
 
-      this._map = L.map(mapRoot, {
-        zoomControl: true,
-        attributionControl: true,
-        scrollWheelZoom: false
-      });
-      this._mapLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        maxZoom: 18
-      }).addTo(this._map);
+      const mapHostChanged = this._mapHost !== mapRoot;
+      if (!this._map || mapHostChanged) {
+        this._teardownMap();
+        this._map = L.map(mapRoot, {
+          zoomControl: true,
+          attributionControl: true,
+          scrollWheelZoom: false
+        });
+        this._mapHost = mapRoot;
+        this._mapLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          maxZoom: 18
+        }).addTo(this._map);
+        this._mapMarkersLayer = L.layerGroup().addTo(this._map);
+
+        if (typeof ResizeObserver !== "undefined") {
+          this._mapResizeObserver = new ResizeObserver(() => {
+            this._refreshMapSize();
+          });
+          this._mapResizeObserver.observe(mapRoot);
+        }
+      }
+
+      if (!this._mapMarkersLayer) {
+        this._mapMarkersLayer = L.layerGroup().addTo(this._map);
+      } else {
+        this._mapMarkersLayer.clearLayers();
+      }
 
       const bounds = [];
       for (const point of points) {
@@ -758,7 +900,7 @@ class LageMonitorCard extends HTMLElement {
           continue;
         }
         if (point.kind === "home") {
-          L.marker([lat, lon]).addTo(this._map).bindPopup(`
+          L.marker([lat, lon]).addTo(this._mapMarkersLayer).bindPopup(`
             <strong>Home</strong><br>
             ${point.severity || "Home Assistant Fokus"}
           `);
@@ -776,7 +918,7 @@ class LageMonitorCard extends HTMLElement {
           weight: 2,
           fillColor: "#f97316",
           fillOpacity: 0.78
-        }).addTo(this._map).bindPopup(`
+        }).addTo(this._mapMarkersLayer).bindPopup(`
           <strong>${point.count} Meldung${point.count === 1 ? "" : "en"} heute</strong><br>
           ${point.source || ""}
           ${titles}
@@ -796,14 +938,11 @@ class LageMonitorCard extends HTMLElement {
       }
 
       this._refreshMapSize();
-
-      if (typeof ResizeObserver !== "undefined") {
-        this._mapResizeObserver = new ResizeObserver(() => {
-          this._refreshMapSize();
-        });
-        this._mapResizeObserver.observe(mapRoot);
-      }
     } catch (_) {
+      if (renderToken !== this._mapRenderToken) {
+        return;
+      }
+      this._teardownMap();
       mapRoot.innerHTML = `<div class="empty" style="padding:16px">Karte konnte derzeit nicht geladen werden.</div>`;
     }
   }
@@ -817,6 +956,9 @@ class LageMonitorCard extends HTMLElement {
       this._map.remove();
       this._map = null;
     }
+    this._mapLayer = null;
+    this._mapMarkersLayer = null;
+    this._mapHost = null;
   }
 
   _refreshMapSize() {
