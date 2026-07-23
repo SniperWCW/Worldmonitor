@@ -377,7 +377,55 @@ function resolveEntityId(hass, explicitValue, candidates) {
       return candidate;
     }
   }
+  const fuzzyMatch = findMatchingEntityId(hass, [explicitValue, ...candidates].filter(Boolean));
+  if (fuzzyMatch) {
+    return fuzzyMatch;
+  }
   return explicitValue || candidates[0];
+}
+
+function normalizeEntityToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function getEntitySearchTokens(values) {
+  const tokens = new Set();
+  for (const value of values) {
+    const raw = String(value || "");
+    if (!raw) {
+      continue;
+    }
+    tokens.add(normalizeEntityToken(raw));
+    const entityIdPart = raw.includes(".") ? raw.split(".").pop() : raw;
+    tokens.add(normalizeEntityToken(entityIdPart));
+  }
+  return [...tokens].filter(Boolean);
+}
+
+function findMatchingEntityId(hass, values) {
+  const wantedTokens = getEntitySearchTokens(values);
+  if (!wantedTokens.length) {
+    return null;
+  }
+
+  for (const [entityId, stateObj] of Object.entries(hass.states)) {
+    const entityIdToken = normalizeEntityToken(entityId);
+    const objectIdToken = normalizeEntityToken(entityId.split(".").pop());
+    const friendlyNameToken = normalizeEntityToken(stateObj?.attributes?.friendly_name);
+    if (wantedTokens.some((token) => token && (
+      entityIdToken === token ||
+      objectIdToken === token ||
+      friendlyNameToken === token
+    ))) {
+      return entityId;
+    }
+  }
+
+  return null;
 }
 
 function mergeConfigWithDefaults(hass, config) {
