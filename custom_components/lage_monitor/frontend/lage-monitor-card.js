@@ -8,7 +8,7 @@ const GERMANY_BOUNDS = {
 const ENTITY_CANDIDATES = {
   entity: ["sensor.germany_score", "sensor.deutschland_lage_score"],
   alerts_entity: ["sensor.active_alerts", "sensor.aktive_warnungen"],
-  stability_entity: ["sensor.stability_index", "sensor.stabilitaetsindex"],
+  stability_entity: ["sensor.stability_index", "sensor.stabilitaetsindex", "sensor.stabilitatsindex"],
   military_entity: [
     "sensor.military_signal_score",
     "sensor.militärisches_aktivitätssignal",
@@ -256,15 +256,16 @@ const CARD_STYLE = `
     color: var(--secondary-text-color);
     font-size: 0.9rem;
   }
-  details.panel {
+  .panel.collapsible {
     overflow: hidden;
   }
-  details.panel > summary {
-    list-style: none;
+  .panel-toggle {
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
     cursor: pointer;
-  }
-  details.panel > summary::-webkit-details-marker {
-    display: none;
+    text-align: left;
   }
   .panel-head.toggle::after {
     content: "▾";
@@ -272,7 +273,7 @@ const CARD_STYLE = `
     color: var(--secondary-text-color);
     transition: transform 0.18s ease;
   }
-  details.panel:not([open]) .panel-head.toggle::after {
+  .panel.collapsible.collapsed .panel-head.toggle::after {
     transform: rotate(-90deg);
   }
   .count-pill {
@@ -456,17 +457,17 @@ function buildMapPoints(markers, homeCenter) {
   return points;
 }
 
-function renderCollapsiblePanel(title, countLabel, content, open = false) {
+function renderCollapsiblePanel(panelKey, title, countLabel, content, open = false) {
   return `
-    <details class="panel" ${open ? "open" : ""}>
-      <summary>
+    <div class="panel collapsible ${open ? "" : "collapsed"}" data-panel-key="${panelKey}">
+      <button class="panel-toggle" type="button" data-panel-key="${panelKey}" aria-expanded="${open ? "true" : "false"}">
         <div class="panel-head toggle">
           <div class="panel-title">${title}</div>
           <div class="panel-note"><span class="count-pill">${countLabel}</span></div>
         </div>
-      </summary>
-      <div class="panel-body tight">${content}</div>
-    </details>
+      </button>
+      ${open ? `<div class="panel-body tight">${content}</div>` : ""}
+    </div>
   `;
 }
 
@@ -474,6 +475,11 @@ class LageMonitorCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    this._panelState = {
+      headlines: false,
+      alerts: false,
+      military: false
+    };
   }
 
   setConfig(config) {
@@ -481,6 +487,7 @@ class LageMonitorCard extends HTMLElement {
   }
 
   set hass(hass) {
+    this._hass = hass;
     const config = mergeConfigWithDefaults(hass, this._config || DEFAULT_CONFIG);
     const stateObj = hass.states[config.entity];
     if (!stateObj) {
@@ -555,6 +562,7 @@ class LageMonitorCard extends HTMLElement {
               </div>
             ` : ""}
             ${renderCollapsiblePanel(
+              "headlines",
               "Top-Ereignisse",
               `${headlines.length} Eintraege`,
               `
@@ -570,9 +578,11 @@ class LageMonitorCard extends HTMLElement {
                     </div>
                   `).join("") : `<div class="empty">Noch keine Ereignisse verfuegbar</div>`}
                 </div>
-              `
+              `,
+              this._panelState.headlines
             )}
             ${renderCollapsiblePanel(
+              "alerts",
               "Amtliche Warnungen",
               `${activeAlerts}`,
               `
@@ -586,10 +596,12 @@ class LageMonitorCard extends HTMLElement {
                     </div>
                   `).join("") : `<div class="empty">Keine Warnungen vorhanden</div>`}
                 </div>
-              `
+              `,
+              this._panelState.alerts
             )}
             ${config.show_military ? `
               ${renderCollapsiblePanel(
+                "military",
                 "Militaerische Aktivitaet",
                 `${militaryItems.length}`,
                 `
@@ -603,7 +615,8 @@ class LageMonitorCard extends HTMLElement {
                       </div>
                     `).join("") : `<div class="empty">Noch keine militaerischen Signalereignisse erkannt</div>`}
                   </div>
-                `
+                `,
+                this._panelState.military
               )}
             ` : ""}
             ${config.show_keywords ? `
@@ -622,12 +635,25 @@ class LageMonitorCard extends HTMLElement {
         </div>
       </ha-card>
     `;
-
+    this._bindPanelToggles();
   }
 
   getCardSize() {
     return 8;
   }
+
+  _bindPanelToggles() {
+    this.shadowRoot.querySelectorAll(".panel-toggle").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const key = button.dataset.panelKey;
+        this._panelState[key] = !this._panelState[key];
+        this.hass = this._hass;
+      });
+    });
+  }
+
   static getConfigElement() {
     return document.createElement("lage-monitor-card-editor");
   }
