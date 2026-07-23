@@ -542,7 +542,7 @@ class LageMonitorCard extends HTMLElement {
     const config = mergeConfigWithDefaults(hass, this._config || DEFAULT_CONFIG);
     const stateObj = hass.states[config.entity];
     if (!stateObj) {
-      this.shadowRoot.innerHTML = `<style>${CARD_STYLE}</style><ha-card><div class="shell"><div class="empty">Entity ${config.entity} not found.</div></div></ha-card>`;
+      this.shadowRoot.innerHTML = `<link rel="stylesheet" href="${LEAFLET_CSS}"><style>${CARD_STYLE}</style><ha-card><div class="shell"><div class="empty">Entity ${config.entity} not found.</div></div></ha-card>`;
       return;
     }
 
@@ -564,6 +564,7 @@ class LageMonitorCard extends HTMLElement {
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder Ereignisse vor.";
 
     const markup = `
+      <link rel="stylesheet" href="${LEAFLET_CSS}">
       <style>${CARD_STYLE}</style>
       <ha-card>
         <div class="shell">
