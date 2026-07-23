@@ -3,10 +3,15 @@
     "step": {
       "user": {
         "title": "Lage Monitor",
-        "description": "Aggregate German warning and news feeds into a Home Assistant situation overview.",
+        "description": "Aggregate official warning and news sources into a Home Assistant situation overview.",
         "data": {
-          "nina_ars": "Optional NINA ARS code for regional dashboard alerts",
-          "include_police": "Include NINA and police alerts",
+          "nina_ars": "Legacy NINA ARS code",
+          "warn_area": "Warning area or district",
+          "include_police": "Include official warnung.bund.de alerts",
+          "warn_mowas": "Include civil protection alerts (MOWAS, BIWAPP, KATWARN)",
+          "warn_dwd": "Include DWD weather alerts",
+          "warn_lhp": "Include flood alerts",
+          "warn_police": "Include police alerts",
           "include_press": "Include Presseportal feeds",
           "include_news": "Include major German news RSS feeds",
           "news_limit": "Maximum visible headlines",
@@ -26,8 +31,13 @@
         "title": "Options",
         "description": "Choose which sources and filters Lage Monitor should use.",
         "data": {
-          "nina_ars": "Optional NINA ARS code for regional dashboard alerts",
-          "include_police": "Include NINA and police alerts",
+          "nina_ars": "Legacy NINA ARS code",
+          "warn_area": "Warning area or district",
+          "include_police": "Include official warnung.bund.de alerts",
+          "warn_mowas": "Include civil protection alerts (MOWAS, BIWAPP, KATWARN)",
+          "warn_dwd": "Include DWD weather alerts",
+          "warn_lhp": "Include flood alerts",
+          "warn_police": "Include police alerts",
           "include_press": "Include Presseportal feeds",
           "include_news": "Include major German news RSS feeds",
           "news_limit": "Maximum visible headlines",
@@ -39,13 +49,18 @@
           "scan_interval": "Refresh interval in seconds"
         },
         "data_description": {
-          "nina_ars": "Leave empty if you do not want to use a regional NINA mapping.",
+          "nina_ars": "No longer needed for warnung.bund.de and can be left empty.",
+          "warn_area": "City, town, or district name as listed on warnung.bund.de, for example Stuttgart, Leonberg, or Landkreis Ludwigsburg.",
           "news_limit": "How many headlines can contribute to the situation scoring and map.",
           "police_count_mode": "Choose between all police items and only locally relevant entries.",
           "focus_mode": "Germany-wide uses all sources, local mode filters more strongly by keywords and radius.",
           "local_keywords": "Comma-separated places or regions, for example Stuttgart, Leonberg, Weilimdorf.",
           "custom_press_feeds": "Comma-separated additional feed URLs; optional.",
           "alert_radius_km": "Radius used for local relevance around the Home position.",
+          "warn_mowas": "Enable or disable the civil protection channels from warnung.bund.de.",
+          "warn_dwd": "Enable or disable weather alerts from the German Weather Service.",
+          "warn_lhp": "Enable or disable flood alerts.",
+          "warn_police": "Enable or disable police alerts.",
           "scan_interval": "How often the sources are refreshed."
         }
       }

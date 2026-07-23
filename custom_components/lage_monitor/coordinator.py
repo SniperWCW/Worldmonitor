@@ -9,6 +9,7 @@ from datetime import timedelta
 import logging
 import math
 import re
+import unicodedata
 from urllib.parse import quote
 
 from homeassistant.config_entries import ConfigEntry
@@ -28,18 +29,28 @@ from .const import (
     CONF_NINA_ARS,
     CONF_POLICE_COUNT_MODE,
     CONF_SCAN_INTERVAL,
+    CONF_WARN_AREA,
+    CONF_WARN_DWD,
+    CONF_WARN_LHP,
+    CONF_WARN_MOWAS,
+    CONF_WARN_POLICE,
     DEFAULT_ALERT_RADIUS_KM,
     DEFAULT_CUSTOM_PRESS_FEEDS,
     DEFAULT_FOCUS_MODE,
     DEFAULT_LOCAL_KEYWORDS,
     DEFAULT_POLICE_COUNT_MODE,
+    DEFAULT_WARN_DWD,
+    DEFAULT_WARN_LHP,
+    DEFAULT_WARN_MOWAS,
+    DEFAULT_WARN_POLICE,
     FOCUS_MODE_LOCAL,
     GERMAN_NEWS_FEEDS,
     KEYWORD_WEIGHTS,
     MILITARY_KEYWORDS,
-    NINA_BASE_URL,
     POLICE_COUNT_MODE_ALL,
     PRESSEPORTAL_FEEDS,
+    WARNUNG_BUND_ASSETS_BASE_URL,
+    WARNUNG_BUND_BASE_URL,
 )
 from .feed import FeedItem, fetch_feed, fetch_json, iso_timestamp
 
@@ -76,6 +87,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
+        self._warnung_kreise: dict[str, dict] | None = None
+        self._warnung_gemeinden: dict[str, dict] | None = None
         interval = timedelta(
             seconds=entry.options.get(CONF_SCAN_INTERVAL, entry.data[CONF_SCAN_INTERVAL])
         )
@@ -99,15 +112,34 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     async def _build_snapshot(self) -> LageSnapshot:
         headlines: list[FeedItem] = []
         alerts: list[dict] = []
-        all_nina_alerts: list[dict] = []
+        all_official_alerts: list[dict] = []
         source_status: dict[str, dict] = {}
 
         news_limit = self.entry.options.get(CONF_NEWS_LIMIT, self.entry.data[CONF_NEWS_LIMIT])
-        configured_ars = self.entry.options.get(CONF_NINA_ARS, self.entry.data[CONF_NINA_ARS])
+        configured_ars = self.entry.options.get(CONF_NINA_ARS, self.entry.data.get(CONF_NINA_ARS, ""))
+        warn_area = self.entry.options.get(CONF_WARN_AREA, self.entry.data.get(CONF_WARN_AREA, ""))
         police_count_mode = self.entry.options.get(
             CONF_POLICE_COUNT_MODE,
             self.entry.data.get(CONF_POLICE_COUNT_MODE, DEFAULT_POLICE_COUNT_MODE),
         )
+        service_filter = {
+            "mowasOn": self.entry.options.get(
+                CONF_WARN_MOWAS,
+                self.entry.data.get(CONF_WARN_MOWAS, DEFAULT_WARN_MOWAS),
+            ),
+            "dwdOn": self.entry.options.get(
+                CONF_WARN_DWD,
+                self.entry.data.get(CONF_WARN_DWD, DEFAULT_WARN_DWD),
+            ),
+            "lhpOn": self.entry.options.get(
+                CONF_WARN_LHP,
+                self.entry.data.get(CONF_WARN_LHP, DEFAULT_WARN_LHP),
+            ),
+            "policeOn": self.entry.options.get(
+                CONF_WARN_POLICE,
+                self.entry.data.get(CONF_WARN_POLICE, DEFAULT_WARN_POLICE),
+            ),
+        }
         focus_mode = self.entry.options.get(
             CONF_FOCUS_MODE,
             self.entry.data.get(CONF_FOCUS_MODE, DEFAULT_FOCUS_MODE),
@@ -129,14 +161,21 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             self.entry.data.get(CONF_ALERT_RADIUS_KM, DEFAULT_ALERT_RADIUS_KM),
         )
         home_center = self._get_home_coordinates()
+        resolved_warn_area = await self._resolve_warn_area(warn_area)
 
         if self.entry.options.get(CONF_INCLUDE_POLICE, self.entry.data[CONF_INCLUDE_POLICE]):
-            nina_alerts, nina_status = await self._safe_fetch_nina_alerts(configured_ars)
-            all_nina_alerts = nina_alerts
-            alerts.extend(
-                self._filter_alerts_by_radius(nina_alerts, home_center, alert_radius_km, focus_mode)
+            official_alerts, official_status = await self._safe_fetch_official_alerts(
+                resolved_warn_area,
+                service_filter,
             )
-            source_status["nina"] = nina_status
+            all_official_alerts = official_alerts
+            if focus_mode == FOCUS_MODE_LOCAL and resolved_warn_area is not None:
+                alerts.extend(official_alerts)
+            else:
+                alerts.extend(
+                    self._filter_alerts_by_radius(official_alerts, home_center, alert_radius_km, focus_mode)
+                )
+            source_status["warnung_bund"] = official_status
 
         if self.entry.options.get(CONF_INCLUDE_PRESS, self.entry.data[CONF_INCLUDE_PRESS]):
             for source, url in self._iter_press_feeds(focus_mode):
@@ -203,7 +242,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         for item in scored[:20]:
             keyword_counter.update(item["keywords"])
 
-        map_markers = self._build_map_markers(all_nina_alerts, home_center)
+        map_markers = self._build_map_markers(all_official_alerts, home_center)
 
         return LageSnapshot(
             germany_score=germany_score,
@@ -225,10 +264,17 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             source_status=source_status,
             diagnostics={
                 "configured_nina_ars": configured_ars or "",
+                "warn_area": warn_area or "",
+                "resolved_warn_area": resolved_warn_area.get("label", "") if resolved_warn_area else "",
+                "resolved_warn_area_code": resolved_warn_area.get("dashboard_code", "") if resolved_warn_area else "",
                 "degraded": any(status["ok"] is False for status in source_status.values()),
                 "focus_mode": focus_mode,
                 "local_keywords": ", ".join(local_keywords),
                 "alert_radius_km": alert_radius_km,
+                "warn_mowas": service_filter["mowasOn"],
+                "warn_dwd": service_filter["dwdOn"],
+                "warn_lhp": service_filter["lhpOn"],
+                "warn_police": service_filter["policeOn"],
                 "police_count_mode": police_count_mode,
                 "police_raw_items": police_raw_items,
                 "police_relevant_items": police_relevant_items,
@@ -263,7 +309,24 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             source_status={},
             diagnostics={
                 "configured_nina_ars": self.entry.options.get(CONF_NINA_ARS, self.entry.data[CONF_NINA_ARS]) or "",
+                "warn_area": self.entry.options.get(CONF_WARN_AREA, self.entry.data.get(CONF_WARN_AREA, "")) or "",
                 "degraded": True,
+                "warn_mowas": self.entry.options.get(
+                    CONF_WARN_MOWAS,
+                    self.entry.data.get(CONF_WARN_MOWAS, DEFAULT_WARN_MOWAS),
+                ),
+                "warn_dwd": self.entry.options.get(
+                    CONF_WARN_DWD,
+                    self.entry.data.get(CONF_WARN_DWD, DEFAULT_WARN_DWD),
+                ),
+                "warn_lhp": self.entry.options.get(
+                    CONF_WARN_LHP,
+                    self.entry.data.get(CONF_WARN_LHP, DEFAULT_WARN_LHP),
+                ),
+                "warn_police": self.entry.options.get(
+                    CONF_WARN_POLICE,
+                    self.entry.data.get(CONF_WARN_POLICE, DEFAULT_WARN_POLICE),
+                ),
                 "sources_total": 0,
                 "sources_ok": 0,
             },
@@ -285,67 +348,38 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             _LOGGER.warning("Feed %s failed: %s", source, err)
             return [], {"ok": False, "items": 0, "error": str(err)}
 
-    async def _safe_fetch_nina_alerts(self, ars: str) -> tuple[list[dict], dict]:
-        """Fetch NINA alerts without aborting the whole integration on failure."""
+    async def _safe_fetch_official_alerts(
+        self,
+        resolved_warn_area: dict | None,
+        service_filter: dict[str, bool],
+    ) -> tuple[list[dict], dict]:
+        """Fetch warnung.bund.de alerts without aborting the whole integration on failure."""
         try:
-            alerts = await self._fetch_nina_alerts(ars)
+            alerts = await self._fetch_official_alerts(resolved_warn_area, service_filter)
             return alerts, {"ok": True, "items": len(alerts), "error": ""}
         except Exception as err:  # noqa: BLE001
-            if "404" in str(err):
-                _LOGGER.debug("NINA alert fetch skipped for unsupported dashboard ARS %s", ars)
-                return [], {"ok": True, "items": 0, "error": ""}
-            _LOGGER.warning("NINA alert fetch failed: %s", err)
+            _LOGGER.warning("warnung.bund.de fetch failed: %s", err)
             return [], {"ok": False, "items": 0, "error": str(err)}
 
-    async def _fetch_nina_alerts(self, ars: str) -> list[dict]:
+    async def _fetch_official_alerts(
+        self,
+        resolved_warn_area: dict | None,
+        service_filter: dict[str, bool],
+    ) -> list[dict]:
         alerts: list[dict] = []
-        if ars:
-            dashboard = await self._fetch_nina_dashboard(ars)
-            if isinstance(dashboard, list):
-                for item in dashboard:
-                    if not isinstance(item, dict):
-                        continue
-                    payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-                    lat, lon = self._extract_lat_lon(item)
-                    alerts.append(
-                        {
-                            "id": self._extract_warning_identifier(item),
-                            "title": item.get("title") or item.get("headline"),
-                            "source": item.get("provider") or "nina_dashboard",
-                            "severity": item.get("severity") or item.get("msgType"),
-                            "sent": item.get("sent"),
-                            "link": payload.get("data") if isinstance(payload, dict) else None,
-                            "latitude": lat,
-                            "longitude": lon,
-                        }
-                    )
+        if resolved_warn_area is not None:
+            dashboard = await self._fetch_warnung_dashboard(resolved_warn_area["dashboard_code"])
+            alerts.extend(self._normalize_dashboard_alert(item) for item in dashboard if isinstance(item, dict))
 
-        for channel in ("mowas", "police", "dwd", "lhp"):
-            data = await fetch_json(self.hass, f"{NINA_BASE_URL}/{channel}/mapData.json")
-            if not isinstance(data, list):
-                continue
-            for item in data[:50]:
-                if not isinstance(item, dict):
+        if not alerts:
+            for channel in self._iter_enabled_warn_channels(service_filter):
+                data = await fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/{channel}/mapData.json")
+                if not isinstance(data, list):
                     continue
-                payload = item.get("payload") or {}
-                lat, lon = self._extract_lat_lon(item)
-                alerts.append(
-                    {
-                        "id": self._extract_warning_identifier(item),
-                        "title": payload.get("data", {}).get("headline")
-                        if isinstance(payload.get("data"), dict)
-                        else item.get("title"),
-                        "source": channel,
-                        "severity": payload.get("data", {}).get("severity")
-                        if isinstance(payload.get("data"), dict)
-                        else None,
-                        "sent": payload.get("data", {}).get("sent")
-                        if isinstance(payload.get("data"), dict)
-                        else None,
-                        "link": None,
-                        "latitude": lat,
-                        "longitude": lon,
-                    }
+                alerts.extend(
+                    self._normalize_map_alert(item, channel)
+                    for item in data[:50]
+                    if isinstance(item, dict)
                 )
 
         unique: dict[str, dict] = {}
@@ -353,7 +387,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             key = str(alert.get("id") or alert.get("title"))
             unique[key] = alert
 
-        resolved = list(unique.values())
+        resolved = [alert for alert in unique.values() if self._is_service_enabled(alert, service_filter)]
         for alert in resolved:
             if alert.get("latitude") is None and alert.get("longitude") is None:
                 lat, lon = await self._fetch_warning_centroid(alert.get("id"))
@@ -362,23 +396,10 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         return resolved
 
-    async def _fetch_nina_dashboard(self, ars: str):
-        """Fetch a dashboard, retrying with an 8-digit AGS fallback when needed."""
-        candidates = [ars.strip()]
-        if len(candidates[0]) == 12:
-            candidates.append(candidates[0][:8])
-
-        last_error: Exception | None = None
-        for candidate in candidates:
-            try:
-                return await fetch_json(self.hass, f"{NINA_BASE_URL}/dashboard/{candidate}.json")
-            except Exception as err:  # noqa: BLE001
-                last_error = err
-                _LOGGER.debug("NINA dashboard lookup failed for %s: %s", candidate, err)
-
-        if last_error is not None and "404" not in str(last_error):
-            raise last_error
-        return []
+    async def _fetch_warnung_dashboard(self, dashboard_code: str) -> list[dict]:
+        """Fetch a warnung.bund.de dashboard by 12-digit district code."""
+        data = await fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/dashboard/{dashboard_code}.json")
+        return data if isinstance(data, list) else []
 
     def _dedupe_items(self, items: Iterable[FeedItem]) -> list[FeedItem]:
         seen: set[str] = set()
@@ -432,10 +453,213 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             return None, None
         safe_identifier = quote(str(identifier), safe="")
         try:
-            geojson = await fetch_json(self.hass, f"{NINA_BASE_URL}/warnings/{safe_identifier}.geojson")
+            geojson = await fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.geojson")
         except Exception:  # noqa: BLE001
             return None, None
         return self._centroid_from_geojson(geojson)
+
+    async def _get_warnung_catalogs(self) -> tuple[dict[str, dict], dict[str, dict]]:
+        """Load and cache district and municipality catalogs from warnung.bund.de."""
+        if self._warnung_kreise is None:
+            data = await fetch_json(self.hass, f"{WARNUNG_BUND_ASSETS_BASE_URL}/converted_kreise.json")
+            self._warnung_kreise = data if isinstance(data, dict) else {}
+        if self._warnung_gemeinden is None:
+            data = await fetch_json(
+                self.hass,
+                f"{WARNUNG_BUND_ASSETS_BASE_URL}/converted_gemeinden.json",
+            )
+            self._warnung_gemeinden = data if isinstance(data, dict) else {}
+        return self._warnung_kreise, self._warnung_gemeinden
+
+    async def _resolve_warn_area(self, raw_value: str) -> dict | None:
+        """Resolve a user-entered place or district name to a warnung.bund.de dashboard code."""
+        value = str(raw_value or "").strip()
+        if not value:
+            return None
+
+        kreise, gemeinden = await self._get_warnung_catalogs()
+        if value in kreise:
+            kreis = kreise[value]
+            return self._make_warn_area_result(value, kreis.get("NAME") or value, None)
+
+        if value in gemeinden:
+            gemeinde = gemeinden[value]
+            return self._make_warn_area_result(
+                str(gemeinde.get("RS") or "")[:5],
+                gemeinde.get("NAME") or value,
+                str(gemeinde.get("RS") or ""),
+            )
+
+        if re.fullmatch(r"\d{12}", value):
+            for gemeinde in gemeinden.values():
+                rs = str(gemeinde.get("RS") or "")
+                if rs == value:
+                    return self._make_warn_area_result(
+                        rs[:5],
+                        gemeinde.get("NAME") or value,
+                        rs,
+                    )
+            if value[:5] in kreise:
+                kreis = kreise[value[:5]]
+                return self._make_warn_area_result(value[:5], kreis.get("NAME") or value, None)
+
+        normalized = self._normalize_text(value)
+        exact_kreis = self._match_warn_area_by_name(normalized, kreise)
+        if exact_kreis is not None:
+            code, label = exact_kreis
+            return self._make_warn_area_result(code, label, None)
+
+        exact_gemeinde = self._match_warn_area_by_name(normalized, gemeinden, use_rs=True)
+        if exact_gemeinde is not None:
+            code, label, rs = exact_gemeinde
+            return self._make_warn_area_result(code, label, rs)
+
+        return None
+
+    def _make_warn_area_result(
+        self,
+        kreis_code: str,
+        label: str,
+        rs: str | None,
+    ) -> dict:
+        """Build a resolved warn area result."""
+        return {
+            "label": label,
+            "kreis_code": kreis_code,
+            "dashboard_code": f"{kreis_code}0000000",
+            "rs": rs or "",
+        }
+
+    def _match_warn_area_by_name(
+        self,
+        normalized_query: str,
+        source: dict[str, dict],
+        *,
+        use_rs: bool = False,
+    ):
+        """Match a query against district or municipality names."""
+        exact_match = None
+        partial_match = None
+        for key, item in source.items():
+            label = str(item.get("NAME") or "").strip()
+            if not label:
+                continue
+            normalized_label = self._normalize_text(label)
+            if normalized_label == normalized_query:
+                if use_rs:
+                    rs = str(item.get("RS") or "")
+                    return rs[:5], label, rs
+                return str(key), label
+            if partial_match is None and normalized_query in normalized_label:
+                partial_match = (key, item)
+            if exact_match is None and normalized_label.startswith(normalized_query):
+                exact_match = (key, item)
+
+        selected = exact_match or partial_match
+        if selected is None:
+            return None
+
+        key, item = selected
+        label = str(item.get("NAME") or "").strip() or str(key)
+        if use_rs:
+            rs = str(item.get("RS") or "")
+            return rs[:5], label, rs
+        return str(key), label
+
+    def _normalize_dashboard_alert(self, item: dict) -> dict:
+        """Normalize a warnung.bund.de dashboard alert entry."""
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        lat, lon = self._extract_lat_lon(item)
+        return {
+            "id": self._extract_warning_identifier(item),
+            "title": payload_data.get("headline")
+            or item.get("title")
+            or self._extract_localized_title(item),
+            "source": self._extract_service_source(item),
+            "severity": payload_data.get("severity") or item.get("severity") or "",
+            "sent": payload_data.get("sent") or item.get("sent") or item.get("startDate"),
+            "link": None,
+            "latitude": lat,
+            "longitude": lon,
+        }
+
+    def _normalize_map_alert(self, item: dict, channel: str) -> dict:
+        """Normalize a warnung.bund.de mapData alert entry."""
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        lat, lon = self._extract_lat_lon(item)
+        return {
+            "id": self._extract_warning_identifier(item),
+            "title": payload_data.get("headline")
+            or item.get("title")
+            or self._extract_localized_title(item),
+            "source": channel,
+            "severity": payload_data.get("severity") or item.get("severity") or "",
+            "sent": payload_data.get("sent") or item.get("sent") or item.get("startDate"),
+            "link": None,
+            "latitude": lat,
+            "longitude": lon,
+        }
+
+    def _extract_localized_title(self, item: dict) -> str:
+        """Return a localized title when available."""
+        title = item.get("i18nTitle")
+        if isinstance(title, dict):
+            for key in ("de", "en"):
+                value = title.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return str(item.get("headline") or item.get("title") or "Warnung")
+
+    def _extract_service_source(self, item: dict) -> str:
+        """Determine the service source from provider or identifier fields."""
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        provider = str(
+            payload_data.get("provider")
+            or item.get("provider")
+            or item.get("identifier")
+            or item.get("id")
+            or ""
+        ).lower()
+        if "pol" in provider:
+            return "police"
+        if "dwd" in provider:
+            return "dwd"
+        if "lhp" in provider:
+            return "lhp"
+        if "katwarn" in provider:
+            return "katwarn"
+        if "biwapp" in provider:
+            return "biwapp"
+        return "mowas"
+
+    def _iter_enabled_warn_channels(self, service_filter: dict[str, bool]) -> list[str]:
+        """Return the warnung.bund.de channels enabled by the current service filter."""
+        channels: list[str] = []
+        if service_filter.get("mowasOn"):
+            channels.extend(["mowas", "biwapp", "katwarn"])
+        if service_filter.get("dwdOn"):
+            channels.append("dwd")
+        if service_filter.get("lhpOn"):
+            channels.append("lhp")
+        if service_filter.get("policeOn"):
+            channels.append("police")
+        return channels
+
+    def _is_service_enabled(self, alert: dict, service_filter: dict[str, bool]) -> bool:
+        """Check whether an alert belongs to an enabled service group."""
+        source = str(alert.get("source") or "").lower()
+        if source in {"mowas", "biwapp", "katwarn"}:
+            return service_filter.get("mowasOn", False)
+        if source == "dwd":
+            return service_filter.get("dwdOn", False)
+        if source == "lhp":
+            return service_filter.get("lhpOn", False)
+        if source == "police":
+            return service_filter.get("policeOn", False)
+        return True
 
     def _extract_lat_lon(self, item: dict) -> tuple[float | None, float | None]:
         """Try to extract coordinates from a map warning payload."""
@@ -525,6 +749,12 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             except ValueError:
                 return None
         return None
+
+    def _normalize_text(self, value: str) -> str:
+        """Normalize user-facing place names for matching."""
+        normalized = unicodedata.normalize("NFKD", str(value or ""))
+        ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"[^a-z0-9]+", "", ascii_text.lower())
 
     def _centroid_from_geojson(self, geojson: dict) -> tuple[float | None, float | None]:
         """Compute a simple centroid from GeoJSON geometry."""

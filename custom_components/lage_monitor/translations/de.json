@@ -3,17 +3,22 @@
     "step": {
       "user": {
         "title": "Lage Monitor",
-        "description": "Bündelt amtliche Warnungen und Nachrichtenquellen zu einer Lageübersicht in Home Assistant.",
+        "description": "Buendelt amtliche Warnungen und Nachrichtenquellen zu einer Lageuebersicht in Home Assistant.",
         "data": {
-          "nina_ars": "Optionaler NINA-ARS-Code für regionale Dashboard-Warnungen",
-          "include_police": "NINA- und Polizeiwarnungen einbeziehen",
+          "nina_ars": "Veralteter NINA-ARS-Code",
+          "warn_area": "Warnort oder Kreis",
+          "include_police": "Amtliche Warnungen von warnung.bund.de einbeziehen",
+          "warn_mowas": "Bevoelkerungsschutzwarnungen (MOWAS, BIWAPP, KATWARN)",
+          "warn_dwd": "DWD-Warnungen einbeziehen",
+          "warn_lhp": "Hochwasserwarnungen einbeziehen",
+          "warn_police": "Polizeiwarnungen einbeziehen",
           "include_press": "Presseportal-Feeds einbeziehen",
-          "include_news": "Große deutsche Nachrichten-RSS-Feeds einbeziehen",
+          "include_news": "Grosse deutsche Nachrichten-RSS-Feeds einbeziehen",
           "news_limit": "Maximale Anzahl sichtbarer Schlagzeilen",
-          "police_count_mode": "Polizeimeldungen zählen",
+          "police_count_mode": "Polizeimeldungen zaehlen",
           "focus_mode": "Fokusmodus",
-          "local_keywords": "Lokale Schlüsselwörter",
-          "custom_press_feeds": "Zusätzliche Presseportal-Feeds",
+          "local_keywords": "Lokale Schluesselwoerter",
+          "custom_press_feeds": "Zusaetzliche Presseportal-Feeds",
           "alert_radius_km": "Lokaler Radius in Kilometern",
           "scan_interval": "Aktualisierungsintervall in Sekunden"
         }
@@ -26,26 +31,36 @@
         "title": "Optionen",
         "description": "Legt fest, welche Quellen und Filter der Lage Monitor verwendet.",
         "data": {
-          "nina_ars": "Optionaler NINA-ARS-Code für regionale Dashboard-Warnungen",
-          "include_police": "NINA- und Polizeiwarnungen einbeziehen",
+          "nina_ars": "Veralteter NINA-ARS-Code",
+          "warn_area": "Warnort oder Kreis",
+          "include_police": "Amtliche Warnungen von warnung.bund.de einbeziehen",
+          "warn_mowas": "Bevoelkerungsschutzwarnungen (MOWAS, BIWAPP, KATWARN)",
+          "warn_dwd": "DWD-Warnungen einbeziehen",
+          "warn_lhp": "Hochwasserwarnungen einbeziehen",
+          "warn_police": "Polizeiwarnungen einbeziehen",
           "include_press": "Presseportal-Feeds einbeziehen",
-          "include_news": "Große deutsche Nachrichten-RSS-Feeds einbeziehen",
+          "include_news": "Grosse deutsche Nachrichten-RSS-Feeds einbeziehen",
           "news_limit": "Maximale Anzahl sichtbarer Schlagzeilen",
-          "police_count_mode": "Polizeimeldungen zählen",
+          "police_count_mode": "Polizeimeldungen zaehlen",
           "focus_mode": "Fokusmodus",
-          "local_keywords": "Lokale Schlüsselwörter",
-          "custom_press_feeds": "Zusätzliche Presseportal-Feeds",
+          "local_keywords": "Lokale Schluesselwoerter",
+          "custom_press_feeds": "Zusaetzliche Presseportal-Feeds",
           "alert_radius_km": "Lokaler Radius in Kilometern",
           "scan_interval": "Aktualisierungsintervall in Sekunden"
         },
         "data_description": {
-          "nina_ars": "Leer lassen, wenn keine regionale NINA-Zuordnung verwendet werden soll.",
-          "news_limit": "Wie viele Schlagzeilen maximal in die Lagebewertung und Karte einfließen.",
-          "police_count_mode": "Wählt zwischen allen Polizeimeldungen und nur lokal relevanten Einträgen.",
-          "focus_mode": "Deutschlandweit nutzt alle Datenquellen, lokal filtert stärker anhand der Schlüsselwörter und des Radius.",
+          "nina_ars": "Wird fuer warnung.bund.de nicht mehr benoetigt und kann leer bleiben.",
+          "warn_area": "Ort, Stadt oder Landkreis wie auf warnung.bund.de, zum Beispiel Stuttgart, Leonberg oder Landkreis Ludwigsburg.",
+          "news_limit": "Wie viele Schlagzeilen maximal in die Lagebewertung und Karte einfliessen.",
+          "police_count_mode": "Waehlt zwischen allen Polizeimeldungen und nur lokal relevanten Eintraegen.",
+          "focus_mode": "Deutschlandweit nutzt alle Datenquellen, lokal filtert staerker anhand der Schluesselwoerter und des Radius.",
           "local_keywords": "Kommagetrennte Orte oder Regionen, zum Beispiel Stuttgart, Leonberg, Weilimdorf.",
-          "custom_press_feeds": "Kommagetrennte zusätzliche Feed-URLs; optional.",
-          "alert_radius_km": "Radius für lokale Relevanzbewertung rund um die Home-Position.",
+          "custom_press_feeds": "Kommagetrennte zusaetzliche Feed-URLs; optional.",
+          "alert_radius_km": "Radius fuer lokale Relevanzbewertung rund um die Home-Position.",
+          "warn_mowas": "Schaltet die Bevoelkerungsschutzkanaele von warnung.bund.de ein oder aus.",
+          "warn_dwd": "Schaltet Wetterwarnungen des Deutschen Wetterdienstes ein oder aus.",
+          "warn_lhp": "Schaltet Hochwasserwarnungen ein oder aus.",
+          "warn_police": "Schaltet Polizeiwarnungen ein oder aus.",
           "scan_interval": "Wie oft die Quellen neu abgerufen werden."
         }
       }
@@ -60,10 +75,10 @@
         "name": "Welt Lage-Score"
       },
       "military_signal_score": {
-        "name": "Militärisches Aktivitätssignal"
+        "name": "Militaerisches Aktivitaetssignal"
       },
       "stability_index": {
-        "name": "Stabilitätsindex"
+        "name": "Stabilitaetsindex"
       },
       "active_alerts": {
         "name": "Aktive Warnungen"

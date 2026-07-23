@@ -21,6 +21,11 @@ from .const import (
     CONF_NINA_ARS,
     CONF_POLICE_COUNT_MODE,
     CONF_SCAN_INTERVAL,
+    CONF_WARN_AREA,
+    CONF_WARN_DWD,
+    CONF_WARN_LHP,
+    CONF_WARN_MOWAS,
+    CONF_WARN_POLICE,
     DEFAULT_ALERT_RADIUS_KM,
     DEFAULT_CUSTOM_PRESS_FEEDS,
     DEFAULT_FOCUS_MODE,
@@ -32,6 +37,11 @@ from .const import (
     DEFAULT_NINA_ARS,
     DEFAULT_POLICE_COUNT_MODE,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_WARN_AREA,
+    DEFAULT_WARN_DWD,
+    DEFAULT_WARN_LHP,
+    DEFAULT_WARN_MOWAS,
+    DEFAULT_WARN_POLICE,
     DOMAIN,
 )
 
@@ -42,8 +52,28 @@ def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
         {
             vol.Optional(CONF_NINA_ARS, default=defaults.get(CONF_NINA_ARS, DEFAULT_NINA_ARS)): str,
             vol.Optional(
+                CONF_WARN_AREA,
+                default=defaults.get(CONF_WARN_AREA, DEFAULT_WARN_AREA),
+            ): str,
+            vol.Optional(
                 CONF_INCLUDE_POLICE,
                 default=defaults.get(CONF_INCLUDE_POLICE, DEFAULT_INCLUDE_POLICE),
+            ): bool,
+            vol.Optional(
+                CONF_WARN_MOWAS,
+                default=defaults.get(CONF_WARN_MOWAS, DEFAULT_WARN_MOWAS),
+            ): bool,
+            vol.Optional(
+                CONF_WARN_DWD,
+                default=defaults.get(CONF_WARN_DWD, DEFAULT_WARN_DWD),
+            ): bool,
+            vol.Optional(
+                CONF_WARN_LHP,
+                default=defaults.get(CONF_WARN_LHP, DEFAULT_WARN_LHP),
+            ): bool,
+            vol.Optional(
+                CONF_WARN_POLICE,
+                default=defaults.get(CONF_WARN_POLICE, DEFAULT_WARN_POLICE),
             ): bool,
             vol.Optional(
                 CONF_INCLUDE_PRESS,

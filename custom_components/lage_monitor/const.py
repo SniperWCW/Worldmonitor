@@ -9,9 +9,14 @@ CARD_RESOURCE_URL = f"{FRONTEND_BASE_URL}/{CARD_FILENAME}"
 
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_NINA_ARS = "nina_ars"
+CONF_WARN_AREA = "warn_area"
 CONF_INCLUDE_POLICE = "include_police"
 CONF_INCLUDE_PRESS = "include_press"
 CONF_INCLUDE_NEWS = "include_news"
+CONF_WARN_MOWAS = "warn_mowas"
+CONF_WARN_DWD = "warn_dwd"
+CONF_WARN_LHP = "warn_lhp"
+CONF_WARN_POLICE = "warn_police"
 CONF_NEWS_LIMIT = "news_limit"
 CONF_POLICE_COUNT_MODE = "police_count_mode"
 CONF_FOCUS_MODE = "focus_mode"
@@ -21,9 +26,14 @@ CONF_ALERT_RADIUS_KM = "alert_radius_km"
 
 DEFAULT_SCAN_INTERVAL = 300
 DEFAULT_NINA_ARS = ""
+DEFAULT_WARN_AREA = ""
 DEFAULT_INCLUDE_POLICE = True
 DEFAULT_INCLUDE_PRESS = True
 DEFAULT_INCLUDE_NEWS = True
+DEFAULT_WARN_MOWAS = True
+DEFAULT_WARN_DWD = True
+DEFAULT_WARN_LHP = True
+DEFAULT_WARN_POLICE = True
 DEFAULT_NEWS_LIMIT = 20
 DEFAULT_POLICE_COUNT_MODE = "all"
 DEFAULT_FOCUS_MODE = "germany"
@@ -43,7 +53,8 @@ ATTR_SOURCE_STATUS = "source_status"
 ATTR_DIAGNOSTICS = "diagnostics"
 ATTR_HOME_COORDINATES = "home_coordinates"
 
-NINA_BASE_URL = "https://nina.api.bund.dev"
+WARNUNG_BUND_BASE_URL = "https://warnung.bund.de/api31"
+WARNUNG_BUND_ASSETS_BASE_URL = "https://warnung.bund.de/assets/json"
 
 GERMAN_NEWS_FEEDS: dict[str, str] = {
     "tagesschau_inland": "https://www.tagesschau.de/inland/index~rss2.xml",
