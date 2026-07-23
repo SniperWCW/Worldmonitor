@@ -900,7 +900,13 @@ class LageMonitorCard extends HTMLElement {
           continue;
         }
         if (point.kind === "home") {
-          L.marker([lat, lon]).addTo(this._mapMarkersLayer).bindPopup(`
+          L.circleMarker([lat, lon], {
+            radius: 8,
+            color: "#ffffff",
+            weight: 3,
+            fillColor: "#2563eb",
+            fillOpacity: 0.96
+          }).addTo(this._mapMarkersLayer).bindPopup(`
             <strong>Home</strong><br>
             ${point.severity || "Home Assistant Fokus"}
           `);

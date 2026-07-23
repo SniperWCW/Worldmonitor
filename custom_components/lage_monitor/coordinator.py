@@ -305,18 +305,18 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 for item in dashboard:
                     if not isinstance(item, dict):
                         continue
+                    payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+                    lat, lon = self._extract_lat_lon(item)
                     alerts.append(
                         {
-                            "id": item.get("id") or item.get("identifier"),
+                            "id": self._extract_warning_identifier(item),
                             "title": item.get("title") or item.get("headline"),
                             "source": item.get("provider") or "nina_dashboard",
                             "severity": item.get("severity") or item.get("msgType"),
                             "sent": item.get("sent"),
-                            "link": item.get("payload", {}).get("data")
-                            if isinstance(item.get("payload"), dict)
-                            else None,
-                            "latitude": None,
-                            "longitude": None,
+                            "link": payload.get("data") if isinstance(payload, dict) else None,
+                            "latitude": lat,
+                            "longitude": lon,
                         }
                     )
 
@@ -331,7 +331,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 lat, lon = self._extract_lat_lon(item)
                 alerts.append(
                     {
-                        "id": item.get("id"),
+                        "id": self._extract_warning_identifier(item),
                         "title": payload.get("data", {}).get("headline")
                         if isinstance(payload.get("data"), dict)
                         else item.get("title"),
@@ -439,19 +439,92 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
     def _extract_lat_lon(self, item: dict) -> tuple[float | None, float | None]:
         """Try to extract coordinates from a map warning payload."""
-        for lat_key, lon_key in (("lat", "lon"), ("latitude", "longitude"), ("Lat", "Lon")):
-            lat = item.get(lat_key)
-            lon = item.get(lon_key)
-            if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-                return float(lat), float(lon)
+        direct = self._extract_coordinate_pair(item)
+        if direct != (None, None):
+            return direct
+        nested = self._find_nested_coordinate_pair(item)
+        if nested != (None, None):
+            return nested
+        return None, None
 
-        coords = item.get("coordinate") or item.get("coordinates")
+    def _extract_warning_identifier(self, item: dict) -> str | None:
+        """Return the best warning identifier we can find for detail/geojson lookups."""
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        for candidate in (
+            item.get("identifier"),
+            item.get("id"),
+            payload.get("identifier"),
+            payload.get("id"),
+            payload_data.get("identifier"),
+            payload_data.get("id"),
+            payload_data.get("warningId"),
+        ):
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return None
+
+    def _extract_coordinate_pair(self, value: dict) -> tuple[float | None, float | None]:
+        """Extract a lat/lon pair from a single mapping level."""
+        for lat_key, lon_key in (
+            ("lat", "lon"),
+            ("lat", "lng"),
+            ("lat", "long"),
+            ("latitude", "longitude"),
+            ("latitude", "lng"),
+            ("Lat", "Lon"),
+        ):
+            lat = self._to_float_or_none(value.get(lat_key))
+            lon = self._to_float_or_none(value.get(lon_key))
+            if lat is not None and lon is not None:
+                return lat, lon
+
+        coords = value.get("coordinate") or value.get("coordinates")
         if isinstance(coords, str):
             parts = COORD_RE.findall(coords)
             if len(parts) >= 2:
-                return float(parts[0]), float(parts[1])
+                lat = self._to_float_or_none(parts[0])
+                lon = self._to_float_or_none(parts[1])
+                if lat is not None and lon is not None:
+                    return lat, lon
+        if isinstance(coords, list) and len(coords) >= 2:
+            first = self._to_float_or_none(coords[0])
+            second = self._to_float_or_none(coords[1])
+            if first is not None and second is not None:
+                if abs(first) <= 90 and abs(second) <= 180:
+                    return first, second
+                if abs(first) <= 180 and abs(second) <= 90:
+                    return second, first
 
         return None, None
+
+    def _find_nested_coordinate_pair(self, value) -> tuple[float | None, float | None]:
+        """Walk nested dict/list structures until a coordinate pair is found."""
+        if isinstance(value, dict):
+            direct = self._extract_coordinate_pair(value)
+            if direct != (None, None):
+                return direct
+            for child in value.values():
+                nested = self._find_nested_coordinate_pair(child)
+                if nested != (None, None):
+                    return nested
+        elif isinstance(value, list):
+            for child in value:
+                nested = self._find_nested_coordinate_pair(child)
+                if nested != (None, None):
+                    return nested
+        return None, None
+
+    def _to_float_or_none(self, value) -> float | None:
+        """Convert a numeric-ish value to float when possible."""
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except ValueError:
+                return None
+        return None
 
     def _centroid_from_geojson(self, geojson: dict) -> tuple[float | None, float | None]:
         """Compute a simple centroid from GeoJSON geometry."""
