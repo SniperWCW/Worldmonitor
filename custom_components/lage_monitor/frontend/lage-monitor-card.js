@@ -25,6 +25,11 @@ const CARD_STYLE = `
   :host {
     display: block;
   }
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
   ha-card {
     overflow: hidden;
     border-radius: 22px;
@@ -41,12 +46,14 @@ const CARD_STYLE = `
     grid-template-columns: 1.15fr 0.85fr;
     gap: 14px;
     margin-bottom: 16px;
+    min-width: 0;
   }
   .hero-main {
     padding: 18px;
     border-radius: 18px;
     background: rgba(15, 23, 42, 0.06);
     border: 1px solid rgba(148, 163, 184, 0.2);
+    min-width: 0;
   }
   .title {
     font-size: 1.9rem;
@@ -94,6 +101,7 @@ const CARD_STYLE = `
   .hero-side {
     display: grid;
     gap: 12px;
+    min-width: 0;
   }
   .metric {
     padding: 14px;
@@ -117,23 +125,29 @@ const CARD_STYLE = `
   .grid {
     display: grid;
     gap: 16px;
+    min-width: 0;
   }
   .panel {
     border: 1px solid rgba(148, 163, 184, 0.18);
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.72);
     overflow: hidden;
+    min-width: 0;
   }
   .panel-head {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
     padding: 14px 16px 10px;
+    min-width: 0;
   }
   .panel-title {
     font-size: 1rem;
     font-weight: 700;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .panel-note {
     color: var(--secondary-text-color);
@@ -141,6 +155,7 @@ const CARD_STYLE = `
   }
   .panel-body {
     padding: 0 16px 16px;
+    min-width: 0;
   }
   .panel-body.tight {
     padding-top: 6px;
@@ -148,11 +163,13 @@ const CARD_STYLE = `
   .items {
     display: grid;
     gap: 12px;
+    min-width: 0;
   }
   .split-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 16px;
+    min-width: 0;
   }
   .split-section-title {
     font-size: 0.9rem;
@@ -162,6 +179,7 @@ const CARD_STYLE = `
   .item {
     padding-top: 12px;
     border-top: 1px solid rgba(148, 163, 184, 0.18);
+    min-width: 0;
   }
   .item:first-child {
     border-top: 0;
@@ -170,8 +188,10 @@ const CARD_STYLE = `
   .item-top {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 6px;
+    min-width: 0;
   }
   .badge {
     min-width: 2.1rem;
@@ -188,24 +208,35 @@ const CARD_STYLE = `
     font-size: 0.78rem;
     text-transform: uppercase;
     letter-spacing: 0.07em;
+    overflow-wrap: anywhere;
   }
   .link {
     color: var(--primary-text-color);
     text-decoration: none;
     font-weight: 600;
     line-height: 1.4;
+    display: block;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .summary {
     color: var(--secondary-text-color);
     font-size: 0.92rem;
     line-height: 1.45;
     margin-top: 6px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .item-meta {
     color: var(--secondary-text-color);
     font-size: 0.8rem;
     line-height: 1.4;
     margin-top: 6px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .alert-summary {
     white-space: pre-line;
@@ -486,17 +517,75 @@ const CARD_STYLE = `
   }
   @media (max-width: 640px) {
     .hero,
-    .editor-grid {
+    .editor-grid,
+    .split-grid {
       grid-template-columns: 1fr;
     }
     .shell {
+      padding: 12px;
+    }
+    .hero-main,
+    .metric {
       padding: 14px;
     }
+    .panel-head {
+      padding: 12px 12px 8px;
+    }
+    .panel-body {
+      padding: 0 12px 12px;
+    }
     .title {
-      font-size: 1.65rem;
+      font-size: 1.5rem;
+      line-height: 1.1;
+    }
+    .sub {
+      font-size: 0.84rem;
+      margin-bottom: 12px;
     }
     .score-value {
-      font-size: 2.5rem;
+      font-size: 2.2rem;
+    }
+    .score {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    .metric-value {
+      font-size: 1.25rem;
+    }
+    .link {
+      font-size: 0.98rem;
+      line-height: 1.35;
+    }
+    .summary,
+    .item-meta {
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }
+  }
+  @media (max-width: 420px) {
+    .shell {
+      padding: 10px;
+    }
+    .hero-main,
+    .metric,
+    .map-selection,
+    .editor-section {
+      padding: 12px;
+    }
+    .panel {
+      border-radius: 16px;
+    }
+    .panel-head {
+      gap: 8px;
+    }
+    .panel-title {
+      font-size: 0.95rem;
+    }
+    .count-pill,
+    .badge {
+      min-width: 1.7rem;
+      padding: 2px 6px;
     }
   }
 `;

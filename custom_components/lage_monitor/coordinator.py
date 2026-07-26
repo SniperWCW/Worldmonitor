@@ -60,6 +60,7 @@ from .feed import FeedItem, fetch_feed, fetch_json, iso_timestamp
 
 _LOGGER = logging.getLogger(__name__)
 COORD_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
+OFFICIAL_ALERT_SOURCES = {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}
 NEWS_PLACE_COORDINATES: dict[str, tuple[float, float]] = {
     "aachen": (50.7753, 6.0839),
     "augsburg": (48.3705, 10.8978),
@@ -285,10 +286,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         )
         germany_headlines = self._build_germany_headlines(scored, local_keywords, news_limit)
 
-        germany_risk_score = min(
-            100,
-            len(alerts) * 6 + sum(item["score"] for item in scored if item["region"] == "de") // 3,
-        )
+        official_alert_risk = min(45, sum(self._score_official_alert(alert) for alert in alerts))
+        germany_news_risk = sum(
+            item["score"]
+            for item in scored
+            if item["region"] == "de" and item["source"] not in OFFICIAL_ALERT_SOURCES
+        ) // 3
+        germany_risk_score = min(100, official_alert_risk + germany_news_risk)
         global_risk_score = min(100, sum(item["score"] for item in scored[:10]) // 2)
         high_priority = sum(1 for item in scored if item["score"] >= 12)
         police_raw_items = sum(1 for item in deduped if item.source == "presseportal_blaulicht")
@@ -380,7 +384,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             },
             last_update=iso_timestamp(),
             score_breakdown={
-                "alerts": len(alerts) * 6,
+                "alerts": official_alert_risk,
                 "military_signal": military_signal_risk,
                 "military_signal_germany": military_signal_germany_risk,
                 "military_signal_world": military_signal_world_risk,
@@ -1212,13 +1216,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             title = str(alert.get("title") or "Warnung")
             source = str(alert.get("source") or "nina")
             severity = str(alert.get("severity") or "")
-            score = 10
-            if source == "police":
-                score = 14
-            elif source == "dwd":
-                score = 12
-            elif source == "mowas":
-                score = 15
+            score = self._score_official_alert(alert)
             items.append(
                 {
                     "title": title,
@@ -1236,6 +1234,56 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 }
             )
         return items
+
+    def _score_official_alert(self, alert: dict) -> int:
+        """Return a differentiated risk score for official alerts."""
+        source = str(alert.get("source") or "").lower()
+        severity = str(alert.get("severity") or "")
+        title = str(alert.get("title") or "")
+        description = str(alert.get("description") or "")
+        text = self._normalize_text(" ".join((severity, title, description)))
+
+        source_weight = {
+            "police": 2,
+            "dwd": 4,
+            "lhp": 4,
+            "biwapp": 5,
+            "katwarn": 5,
+            "mowas": 6,
+        }.get(source, 4)
+
+        severity_weight = 0
+        for keywords, weight in (
+            (("extrem", "extreme", "stufe 4", "unwetterwarnung", "gefahr"), 8),
+            (("hoch", "high", "stufe 3", "warnung", "warning", "alarm"), 5),
+            (("moderat", "moderate", "stufe 2", "beobachtung"), 3),
+            (("gering", "minor", "stufe 1", "hinweis", "information", "update"), 1),
+        ):
+            if any(keyword in text for keyword in keywords):
+                severity_weight = weight
+                break
+
+        critical_bonus = 0
+        for keywords, weight in (
+            (("evaku", "rauchgas", "grossbrand", "explosion", "terror", "amok"), 6),
+            (("kampfmittel", "chemikal", "trinkwasserverunreinigung", "ausfall", "blackout"), 5),
+            (("hochwasser", "ueberschwemm", "sturm", "orkan", "waldbrand"), 4),
+            (("hitz", "glatteis", "schnee", "regen"), 2),
+        ):
+            if any(keyword in text for keyword in keywords):
+                critical_bonus = max(critical_bonus, weight)
+
+        reduction = 0
+        for keywords, weight in (
+            (("aktualisierung", "fortschreibung", "update", "hinweis"), 1),
+            (("schutzchlor", "chlorung", "chlorungsmassnahme", "vorsorglich"), 3),
+            (("keine gesundheitsgefahrdung", "keine gesundheitsgefährdung", "entwarnung"), 4),
+        ):
+            if any(keyword in text for keyword in keywords):
+                reduction = max(reduction, weight)
+
+        score = source_weight + severity_weight + critical_bonus - reduction
+        return max(2, min(score, 16))
 
     def _build_local_headlines(
         self,
