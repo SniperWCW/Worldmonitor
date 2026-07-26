@@ -506,9 +506,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 "police_items": 0,
             },
             analysis_summary={
-                "headline": "Keine aktuelle Lagebewertung verfuegbar.",
+                "headline": "Keine aktuelle Lagebewertung verfügbar.",
                 "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
-                "outlook": "Nach dem naechsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
+                "outlook": "Nach dem nächsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
             },
             risk_drivers=[],
             score_trend={"delta": 0, "direction": "stable", "label": "Keine Vergleichsdaten"},
@@ -575,15 +575,15 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             },
             {
                 "key": "military_world",
-                "label": "Militaersignal Welt",
+                "label": "Militärsignal Welt",
                 "value": int(military_signal_world_risk),
-                "detail": "Globale militaerische Aktivitaet",
+                "detail": "Globale militärische Aktivität",
             },
             {
                 "key": "military_germany",
-                "label": "Militaersignal Deutschland",
+                "label": "Militärsignal Deutschland",
                 "value": int(military_signal_germany_risk),
-                "detail": "Militaerische Signalbegriffe mit Deutschland-Bezug",
+                "detail": "Militärische Signalbegriffe mit Deutschland-Bezug",
             },
         ]
         ranked = [driver for driver in drivers if driver["value"] > 0]
@@ -605,14 +605,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         if germany_score <= 25:
             headline = "Deutschland aktuell klar angespannt."
         elif germany_score <= 45:
-            headline = "Deutschland aktuell spuerbar belastet."
+            headline = "Deutschland aktuell spürbar belastet."
         elif germany_score <= 65:
-            headline = "Deutschland aktuell erhoeht aufmerksam, aber nicht akut kritisch."
+            headline = "Deutschland aktuell erhöht aufmerksam, aber nicht akut kritisch."
 
         if stability_index <= 35:
-            headline += " Die Stabilitaet ist deutlich unter Normalniveau."
+            headline += " Die Stabilität ist deutlich unter Normalniveau."
         elif stability_index <= 55:
-            headline += " Die Stabilitaet bleibt fragil."
+            headline += " Die Stabilität bleibt fragil."
 
         if top_driver is None:
             drivers = "Aktuell fehlen dominante Risikotreiber in den Eingangsdaten."
@@ -621,14 +621,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             if germany_headlines:
                 top_title = str(germany_headlines[0].get("title") or "").strip()
                 if top_title:
-                    drivers += f" Praegendes Thema: {top_title}"
+                    drivers += f" Prägendes Thema: {top_title}"
 
         if active_alerts >= 10 and military_signal_germany >= 70:
-            outlook = "Amtliche Warnlagen sind vorhanden, waehrend das Militaersignal in Deutschland derzeit nicht zusaetzlich eskaliert."
+            outlook = "Amtliche Warnlagen sind vorhanden, während das Militärsignal in Deutschland derzeit nicht zusätzlich eskaliert."
         elif military_signal_germany < 50:
-            outlook = "Neben der Nachrichtenlage sollte besonders beobachtet werden, ob sich das Deutschland-bezogene Militaersignal weiter verschaerft."
+            outlook = "Neben der Nachrichtenlage sollte besonders beobachtet werden, ob sich das Deutschland-bezogene Militärsignal weiter verschärft."
         else:
-            outlook = "Entscheidend fuer die naechsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
+            outlook = "Entscheidend für die nächsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
 
         return {
             "headline": headline,

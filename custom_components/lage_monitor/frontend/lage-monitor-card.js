@@ -828,7 +828,7 @@ function getScoreState(value, positiveHigh = false) {
     return { className: "state-good", label: "Gruen: niedrig ist ruhig" };
   }
   if (numeric <= 70) {
-    return { className: "state-medium", label: "Gelb: erhoeht" };
+    return { className: "state-medium", label: "Gelb: erhöht" };
   }
   return { className: "state-bad", label: "Rot: hoch ist kritisch" };
 }
@@ -1029,7 +1029,7 @@ class LageMonitorCard extends HTMLElement {
           <div class="hero">
             <div class="hero-main">
               <div class="title">${config.title}</div>
-              <div class="sub">Lageueberblick fuer Deutschland und relevante Ereignisse. 100 = gruen = gut, 0 = rot = kritisch.</div>
+              <div class="sub">Lageüberblick für Deutschland und relevante Ereignisse. 100 = grün = gut, 0 = rot = kritisch.</div>
               <div class="score">
                 <div class="score-value ${germanyScoreState.className}">${formatOutOfHundred(stateObj.state)}</div>
                 <div class="score-label">Deutschland Lage-Score</div>
@@ -1038,9 +1038,9 @@ class LageMonitorCard extends HTMLElement {
             </div>
             <div class="hero-side">
               ${renderMetric("Aktive Warnungen", activeAlerts, { positiveHigh: false })}
-              ${renderMetric("Stabilitaet", stability, { positiveHigh: true, showOutOfHundred: true })}
-              ${renderMetric("Militaersignal Deutschland", militarySignalGermany, { positiveHigh: true, showOutOfHundred: true })}
-              ${renderMetric("Militaersignal Welt", militarySignalWorld, { positiveHigh: true, showOutOfHundred: true })}
+              ${renderMetric("Stabilität", stability, { positiveHigh: true, showOutOfHundred: true })}
+              ${renderMetric("Militärsignal Deutschland", militarySignalGermany, { positiveHigh: true, showOutOfHundred: true })}
+              ${renderMetric("Militärsignal Welt", militarySignalWorld, { positiveHigh: true, showOutOfHundred: true })}
             </div>
           </div>
           <div class="grid">
@@ -1054,12 +1054,12 @@ class LageMonitorCard extends HTMLElement {
               <div class="panel-body">
                 <div class="analysis-grid">
                   <div class="analysis-copy">
-                    <div class="analysis-lead">${escapeHtml(analysisSummary.headline || "Keine aktuelle Lagebewertung verfuegbar.")}</div>
+                    <div class="analysis-lead">${escapeHtml(analysisSummary.headline || "Keine aktuelle Lagebewertung verfügbar.")}</div>
                     <div class="analysis-text">${escapeHtml(analysisSummary.drivers || "")}</div>
                     <div class="analysis-text">${escapeHtml(analysisSummary.outlook || "")}</div>
                   </div>
                   <div class="analysis-side">
-                    <div class="split-section-title">Staerkste Treiber</div>
+                    <div class="split-section-title">Stärkste Treiber</div>
                     <div class="driver-list">
                       ${riskDrivers.length ? riskDrivers.map((driver) => `
                         <div class="driver-item">
@@ -1069,7 +1069,7 @@ class LageMonitorCard extends HTMLElement {
                             <div class="driver-detail">${escapeHtml(driver.detail || "")}</div>
                           </div>
                         </div>
-                      `).join("") : `<div class="empty">Noch keine aktuellen Treiber verfuegbar</div>`}
+                      `).join("") : `<div class="empty">Noch keine aktuellen Treiber verfügbar</div>`}
                     </div>
                   </div>
                 </div>
@@ -1106,7 +1106,7 @@ class LageMonitorCard extends HTMLElement {
                           <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
                           <div class="summary">${item.summary || ""}</div>
                         </div>
-                      `).join("") : `<div class="empty">Keine lokalen Treffer verfuegbar</div>`}
+                      `).join("") : `<div class="empty">Keine lokalen Treffer verfügbar</div>`}
                     </div>
                   </div>
                   <div>
@@ -1121,7 +1121,7 @@ class LageMonitorCard extends HTMLElement {
                           <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
                           <div class="summary">${item.summary || ""}</div>
                         </div>
-                      `).join("") : `<div class="empty">Keine deutschlandweiten Treffer verfuegbar</div>`}
+                      `).join("") : `<div class="empty">Keine deutschlandweiten Treffer verfügbar</div>`}
                     </div>
                   </div>
                 </div>
@@ -1151,7 +1151,7 @@ class LageMonitorCard extends HTMLElement {
             ${config.show_military ? `
               ${renderCollapsiblePanel(
                 "military",
-                "Militaerische Aktivitaet",
+                "Militärische Aktivität",
                 `${militaryItems.length}`,
                 `
                   <div class="items">
@@ -1162,7 +1162,7 @@ class LageMonitorCard extends HTMLElement {
                         </div>
                         <div class="link">${item.title}</div>
                       </div>
-                    `).join("") : `<div class="empty">Noch keine militaerischen Signalereignisse erkannt</div>`}
+                    `).join("") : `<div class="empty">Noch keine militärischen Signalereignisse erkannt</div>`}
                   </div>
                 `,
                 this._panelState.military
@@ -1171,11 +1171,11 @@ class LageMonitorCard extends HTMLElement {
             ${config.show_keywords ? `
               <div class="panel">
                 <div class="panel-head">
-                  <div class="panel-title">Schluesselbegriffe</div>
+                  <div class="panel-title">Schlüsselbegriffe</div>
                 </div>
                 <div class="panel-body">
                   <div class="chips">
-                    ${keywords.length ? keywords.map((item) => `<span class="chip">${item.keyword} (${item.count})</span>`).join("") : `<span class="empty">Noch keine Schlagwoerter</span>`}
+                    ${keywords.length ? keywords.map((item) => `<span class="chip">${item.keyword} (${item.count})</span>`).join("") : `<span class="empty">Noch keine Schlagwörter</span>`}
                   </div>
                 </div>
               </div>
@@ -1266,7 +1266,7 @@ class LageMonitorCard extends HTMLElement {
           const meta = [item.source, item.severity].filter(Boolean).map(escapeHtml).join(" | ");
           return `<div class="map-selection-item">${titleMarkup}${meta ? `<div class="map-selection-meta">${meta}</div>` : ""}</div>`;
         }).join("")
-      : `<div class="empty">Zu diesem Kartenpunkt sind keine Detailmeldungen verfuegbar.</div>`;
+      : `<div class="empty">Zu diesem Kartenpunkt sind keine Detailmeldungen verfügbar.</div>`;
 
     selection.innerHTML = `
       <div class="map-selection-title">${escapeHtml(point.title || label)}</div>
@@ -1498,8 +1498,8 @@ class LageMonitorCardEditor extends HTMLElement {
           </div>
           <div class="editor-toggle-grid">
             ${this._toggle("show_map", "Karte anzeigen", config.show_map)}
-            ${this._toggle("show_keywords", "Schluesselbegriffe anzeigen", config.show_keywords)}
-            ${this._toggle("show_military", "Militaerbereich anzeigen", config.show_military)}
+            ${this._toggle("show_keywords", "Schlüsselbegriffe anzeigen", config.show_keywords)}
+            ${this._toggle("show_military", "Militärbereich anzeigen", config.show_military)}
           </div>
         </div>
         <div class="editor-section">
@@ -1508,8 +1508,8 @@ class LageMonitorCardEditor extends HTMLElement {
           <div class="editor-grid single">
             ${this._field("entity", "Score-Entity", config.entity || "")}
             ${this._field("alerts_entity", "Alerts-Entity", config.alerts_entity || "")}
-            ${this._field("stability_entity", "Stabilitaets-Entity", config.stability_entity || "")}
-            ${this._field("military_entity", "Militaer-Entity", config.military_entity || "")}
+            ${this._field("stability_entity", "Stabilitäts-Entity", config.stability_entity || "")}
+            ${this._field("military_entity", "Militär-Entity", config.military_entity || "")}
           </div>
         </div>
       </div>
