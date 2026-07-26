@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from email.utils import parsedate_to_datetime
+import html
 import logging
 import math
 import re
@@ -283,11 +285,11 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         )
         germany_headlines = self._build_germany_headlines(scored, local_keywords, news_limit)
 
-        germany_score = min(
+        germany_risk_score = min(
             100,
             len(alerts) * 6 + sum(item["score"] for item in scored if item["region"] == "de") // 3,
         )
-        global_score = min(100, sum(item["score"] for item in scored[:10]) // 2)
+        global_risk_score = min(100, sum(item["score"] for item in scored[:10]) // 2)
         high_priority = sum(1 for item in scored if item["score"] >= 12)
         police_raw_items = sum(1 for item in deduped if item.source == "presseportal_blaulicht")
         police_relevant_items = sum(
@@ -302,23 +304,28 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         military_items_germany = [item for item in military_items_all if item["region"] == "de"][:10]
         military_items_world = [item for item in military_items_all if item["region"] == "world"][:10]
         military_items = military_items_all[:10]
-        military_signal_germany = self._compute_military_signal(military_items_germany)
-        military_signal_world = self._compute_military_signal(military_items_world)
-        military_signal = max(military_signal_germany, military_signal_world)
+        military_signal_germany_risk = self._compute_military_signal(military_items_germany)
+        military_signal_world_risk = self._compute_military_signal(military_items_world)
+        military_signal_risk = max(military_signal_germany_risk, military_signal_world_risk)
         stability_index = max(
             0,
             min(
                 100,
                 100
                 - (
-                    int(germany_score * 0.55)
-                    + int(global_score * 0.15)
+                    int(germany_risk_score * 0.55)
+                    + int(global_risk_score * 0.15)
                     + high_priority * 3
-                    + min(military_signal_germany // 5, 12)
-                    + min(military_signal_world // 6, 10)
+                    + min(military_signal_germany_risk // 5, 12)
+                    + min(military_signal_world_risk // 6, 10)
                 ),
             ),
         )
+        germany_score = 100 - germany_risk_score
+        global_score = 100 - global_risk_score
+        military_signal_germany = 100 - military_signal_germany_risk
+        military_signal_world = 100 - military_signal_world_risk
+        military_signal = 100 - military_signal_risk
 
         keyword_counter: Counter[str] = Counter()
         for item in scored[:20]:
@@ -379,9 +386,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             last_update=iso_timestamp(),
             score_breakdown={
                 "alerts": len(alerts) * 6,
-                "military_signal": military_signal,
-                "military_signal_germany": military_signal_germany,
-                "military_signal_world": military_signal_world,
+                "military_signal": military_signal_risk,
+                "military_signal_germany": military_signal_germany_risk,
+                "military_signal_world": military_signal_world_risk,
                 "high_priority_items": high_priority * 5,
                 "police_items": police_items * 2,
             },
@@ -390,14 +397,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     def _empty_snapshot(self) -> LageSnapshot:
         """Return a safe fallback snapshot so entities can still be created."""
         return LageSnapshot(
-            germany_score=0,
-            global_score=0,
+            germany_score=100,
+            global_score=100,
             active_alerts=0,
             police_items=0,
             high_priority_items=0,
-            military_signal_score=0,
-            military_signal_germany=0,
-            military_signal_world=0,
+            military_signal_score=100,
+            military_signal_germany=100,
+            military_signal_world=100,
             stability_index=100,
             headlines=[],
             local_headlines=[],
@@ -445,7 +452,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         )
 
     def _compute_military_signal(self, items: list[dict]) -> int:
-        """Return a capped military signal score where higher means more critical."""
+        """Return a capped military risk score where higher means more critical."""
         return min(
             100,
             len(items) * 7 + sum(int(item.get("military_score") or 0) for item in items) // 2,
@@ -502,6 +509,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             unique[key] = alert
 
         resolved = [alert for alert in unique.values() if self._is_service_enabled(alert, service_filter)]
+        if resolved:
+            await self._enrich_official_alert_details(resolved[:15])
         for alert in resolved:
             if alert.get("latitude") is None and alert.get("longitude") is None:
                 lat, lon = await self._fetch_warning_centroid(alert.get("id"))
@@ -783,6 +792,75 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         if "biwapp" in provider:
             return "biwapp"
         return "mowas"
+
+    async def _enrich_official_alert_details(self, alerts: list[dict]) -> None:
+        """Populate official warning text and affected regions from warnung.bund detail data."""
+        await asyncio.gather(
+            *(self._enrich_single_official_alert(alert) for alert in alerts),
+            return_exceptions=True,
+        )
+
+    async def _enrich_single_official_alert(self, alert: dict) -> None:
+        """Populate a single official alert with description and affected region text."""
+        identifier = str(alert.get("id") or "").strip()
+        if not identifier:
+            return
+        try:
+            details = await self._fetch_warning_details(identifier)
+        except Exception:  # noqa: BLE001
+            return
+        if details["description"]:
+            alert["description"] = details["description"]
+        if details["affected_regions"]:
+            alert["affected_regions"] = details["affected_regions"]
+
+    async def _fetch_warning_details(self, identifier: str) -> dict[str, str]:
+        """Fetch human-readable official warning details for a given identifier."""
+        safe_identifier = quote(identifier, safe="")
+        data = await fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.json")
+        if not isinstance(data, dict):
+            return {"description": "", "affected_regions": ""}
+
+        info_entries = data.get("info")
+        if not isinstance(info_entries, list):
+            return {"description": "", "affected_regions": ""}
+
+        selected_info = None
+        for entry in info_entries:
+            if isinstance(entry, dict) and str(entry.get("language") or "").upper().startswith("DE"):
+                selected_info = entry
+                break
+        if selected_info is None:
+            selected_info = next((entry for entry in info_entries if isinstance(entry, dict)), None)
+        if not isinstance(selected_info, dict):
+            return {"description": "", "affected_regions": ""}
+
+        areas = selected_info.get("area")
+        area_entries = areas if isinstance(areas, list) else [areas] if isinstance(areas, dict) else []
+        area_descriptions: list[str] = []
+        for area in area_entries:
+            if not isinstance(area, dict):
+                continue
+            area_desc = self._clean_warning_text(area.get("areaDesc"))
+            if area_desc and area_desc not in area_descriptions:
+                area_descriptions.append(area_desc)
+
+        return {
+            "description": self._clean_warning_text(selected_info.get("description")),
+            "affected_regions": " | ".join(area_descriptions),
+        }
+
+    def _clean_warning_text(self, value: object) -> str:
+        """Convert warnung.bund rich text into compact plain text."""
+        text = str(value or "")
+        if not text.strip():
+            return ""
+        text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = html.unescape(text)
+        text = re.sub(r"[ \t\r\f\v]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     def _iter_enabled_warn_channels(self, service_filter: dict[str, bool]) -> list[str]:
         """Return the warnung.bund.de channels enabled by the current service filter."""

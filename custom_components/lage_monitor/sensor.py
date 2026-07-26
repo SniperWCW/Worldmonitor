@@ -66,7 +66,7 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
         self._attr_unique_id = f"{entry.entry_id}_{key}"
         self._attr_name = name
         self._attr_suggested_object_id = key
-        if "score" in key:
+        if "score" in key or key == "stability_index":
             self._attr_native_unit_of_measurement = "/100"
         if key in {"active_alerts", "police_items", "high_priority_items"}:
             self._attr_icon = "mdi:alert"

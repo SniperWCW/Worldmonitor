@@ -77,8 +77,26 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
 
     existing = resources.async_items()
     for item in existing:
-        if item.get("url") == CARD_RESOURCE_URL:
+        item_url = item.get("url") or ""
+        item_base_url = item_url.split("?", 1)[0]
+        resource_base_url = CARD_RESOURCE_URL.split("?", 1)[0]
+        if item_url == CARD_RESOURCE_URL:
             return
+        if item_base_url == resource_base_url and hasattr(resources, "async_update_item"):
+            try:
+                await resources.async_update_item(
+                    item["id"],
+                    {"res_type": "module", "url": CARD_RESOURCE_URL},
+                )
+                _LOGGER.info("Updated Lovelace resource %s -> %s", item_url, CARD_RESOURCE_URL)
+                return
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Could not update Lovelace resource %s to %s: %s",
+                    item_url,
+                    CARD_RESOURCE_URL,
+                    err,
+                )
 
     try:
         await resources.async_create_item({"res_type": "module", "url": CARD_RESOURCE_URL})

@@ -59,6 +59,12 @@ const CARD_STYLE = `
     font-size: 0.9rem;
     margin-bottom: 16px;
   }
+  .status-line {
+    margin-top: 12px;
+    color: var(--secondary-text-color);
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
   .score {
     display: flex;
     align-items: baseline;
@@ -206,6 +212,15 @@ const CARD_STYLE = `
     font-size: 0.92rem;
     line-height: 1.45;
     margin-top: 6px;
+  }
+  .item-meta {
+    color: var(--secondary-text-color);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin-top: 6px;
+  }
+  .alert-summary {
+    white-space: pre-line;
   }
   .chips {
     display: flex;
@@ -657,13 +672,36 @@ function getScoreState(value, positiveHigh = false) {
   return { className: "state-bad", label: "Rot: hoch ist kritisch" };
 }
 
+function formatOutOfHundred(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value ?? "-");
+  }
+  return `${numeric}/100`;
+}
+
+function formatLastUpdate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "Unbekannt";
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return text;
+  }
+  return new Intl.DateTimeFormat("de-DE", {
+    dateStyle: "short",
+    timeStyle: "medium"
+  }).format(date);
+}
+
 function renderMetric(title, value, options = {}) {
-  const { positiveHigh = false, hint = "" } = options;
+  const { positiveHigh = false, hint = "", showOutOfHundred = false } = options;
   const state = getScoreState(value, positiveHigh);
   return `
     <div class="metric">
       <div class="metric-label">${title}</div>
-      <div class="metric-value ${state.className}">${value}</div>
+      <div class="metric-value ${state.className}">${showOutOfHundred ? formatOutOfHundred(value) : value}</div>
       <div class="metric-hint">${hint || state.label}</div>
     </div>
   `;
@@ -800,6 +838,7 @@ class LageMonitorCard extends HTMLElement {
     const militarySignalWorld = attrs.military_signal_world ?? "-";
     const stability = hass.states[config.stability_entity]?.state ?? "-";
     const military = hass.states[config.military_entity]?.state ?? "-";
+    const lastUpdate = formatLastUpdate(attrs.last_update);
     const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
     const homeCenter = getHomeCenter(hass);
     const mapPoints = buildMapPoints(markers, homeCenter);
@@ -807,7 +846,7 @@ class LageMonitorCard extends HTMLElement {
     const mapStatus = realMarkerCount > 0
       ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus aktuellen Warnungen und News mit Ortsbezug.`
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder News mit Ortsbezug vor.";
-    const germanyScoreState = getScoreState(stateObj.state, false);
+    const germanyScoreState = getScoreState(stateObj.state, true);
 
     const markup = `
       <style>${CARD_STYLE}</style>
@@ -818,16 +857,17 @@ class LageMonitorCard extends HTMLElement {
               <div class="title">${config.title}</div>
               <div class="sub">Lageueberblick fuer Deutschland und relevante Ereignisse</div>
               <div class="score">
-                <div class="score-value ${germanyScoreState.className}">${stateObj.state}</div>
+                <div class="score-value ${germanyScoreState.className}">${formatOutOfHundred(stateObj.state)}</div>
                 <div class="score-label">Deutschland Lage-Score</div>
               </div>
               <div class="score-state">${germanyScoreState.label}</div>
+              <div class="status-line">Zuletzt aktualisiert: ${lastUpdate}</div>
             </div>
             <div class="hero-side">
               ${renderMetric("Aktive Warnungen", activeAlerts, { positiveHigh: false, hint: "Mehr Warnungen bedeuten meist hoehere Lagebelastung." })}
-              ${renderMetric("Stabilitaet", stability, { positiveHigh: true, hint: "Hier ist 100 gut und 0 kritisch." })}
-              ${renderMetric("Militaersignal Deutschland", militarySignalGermany, { positiveHigh: false, hint: "Hier ist 100 kritisch und 0 ruhig." })}
-              ${renderMetric("Militaersignal Welt", militarySignalWorld, { positiveHigh: false, hint: "Hier ist 100 kritisch und 0 ruhig." })}
+              ${renderMetric("Stabilitaet", stability, { positiveHigh: true, hint: "Hier ist 100 sicher und 0 kritisch.", showOutOfHundred: true })}
+              ${renderMetric("Militaersignal Deutschland", militarySignalGermany, { positiveHigh: true, hint: "Hier ist 100 sicher und 0 kritisch.", showOutOfHundred: true })}
+              ${renderMetric("Militaersignal Welt", militarySignalWorld, { positiveHigh: true, hint: "Hier ist 100 sicher und 0 kritisch.", showOutOfHundred: true })}
             </div>
           </div>
           <div class="grid">
@@ -893,9 +933,11 @@ class LageMonitorCard extends HTMLElement {
                   ${alerts.length ? alerts.map((item) => `
                     <div class="item">
                       <div class="item-top">
-                        <span class="source">${item.source}</span>
+                        <span class="source">${escapeHtml(item.source || "")}</span>
                       </div>
-                      <div class="link">${item.title || "Warnung ohne Titel"}</div>
+                      <div class="link">${escapeHtml(item.title || "Warnung ohne Titel")}</div>
+                      ${item.affected_regions ? `<div class="item-meta">Betroffene Region: ${escapeHtml(item.affected_regions)}</div>` : ""}
+                      ${item.description ? `<div class="summary alert-summary">${escapeHtml(item.description)}</div>` : ""}
                     </div>
                   `).join("") : `<div class="empty">Keine Warnungen vorhanden</div>`}
                 </div>
