@@ -11,8 +11,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     ATTR_ALERTS,
     ATTR_DIAGNOSTICS,
+    ATTR_GERMANY_HEADLINES,
     ATTR_HEADLINES,
     ATTR_LAST_UPDATE,
+    ATTR_LOCAL_HEADLINES,
     ATTR_MAP_MARKERS,
     ATTR_MILITARY_ITEMS,
     ATTR_SCORE_BREAKDOWN,
@@ -88,6 +90,8 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
         return {
             ATTR_ALERTS: self.coordinator.data.alerts,
             ATTR_HEADLINES: self.coordinator.data.headlines,
+            ATTR_LOCAL_HEADLINES: self.coordinator.data.local_headlines,
+            ATTR_GERMANY_HEADLINES: self.coordinator.data.germany_headlines,
             ATTR_MAP_MARKERS: self.coordinator.data.map_markers,
             ATTR_MILITARY_ITEMS: self.coordinator.data.military_items,
             ATTR_SOURCE_STATUS: self.coordinator.data.source_status,

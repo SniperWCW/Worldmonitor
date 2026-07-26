@@ -131,6 +131,16 @@ const CARD_STYLE = `
     display: grid;
     gap: 12px;
   }
+  .split-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .split-section-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
   .item {
     padding-top: 12px;
     border-top: 1px solid rgba(148, 163, 184, 0.18);
@@ -720,7 +730,8 @@ class LageMonitorCard extends HTMLElement {
     }
 
     const attrs = stateObj.attributes;
-    const headlines = (attrs.headlines || []).slice(0, config.limit);
+    const localHeadlines = (attrs.local_headlines || []).slice(0, config.limit);
+    const germanyHeadlines = (attrs.germany_headlines || []).slice(0, config.limit);
     const alertItems = attrs.alerts || [];
     const alerts = alertItems.slice(0, 10);
     const keywords = (attrs.top_keywords || []).slice(0, 6);
@@ -780,20 +791,40 @@ class LageMonitorCard extends HTMLElement {
             ` : ""}
             ${renderCollapsiblePanel(
               "headlines",
-              "Top-Ereignisse",
-              `${headlines.length} Eintraege`,
+              "Top-Ergebnisse",
+              `${localHeadlines.length + germanyHeadlines.length} Eintraege`,
               `
-                <div class="items">
-                  ${headlines.length ? headlines.map((item) => `
-                    <div class="item">
-                      <div class="item-top">
-                        <span class="badge">${item.score}</span>
-                        <span class="source">${item.source}</span>
-                      </div>
-                      <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
-                      <div class="summary">${item.summary || ""}</div>
+                <div class="split-grid">
+                  <div>
+                    <div class="split-section-title">Top Ergebnisse Lokal</div>
+                    <div class="items">
+                      ${localHeadlines.length ? localHeadlines.map((item) => `
+                        <div class="item">
+                          <div class="item-top">
+                            <span class="badge">${item.score}</span>
+                            <span class="source">${item.source}</span>
+                          </div>
+                          <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
+                          <div class="summary">${item.summary || ""}</div>
+                        </div>
+                      `).join("") : `<div class="empty">Keine lokalen Treffer verfuegbar</div>`}
                     </div>
-                  `).join("") : `<div class="empty">Noch keine Ereignisse verfuegbar</div>`}
+                  </div>
+                  <div>
+                    <div class="split-section-title">Top Ergebnisse deutschlandweit</div>
+                    <div class="items">
+                      ${germanyHeadlines.length ? germanyHeadlines.map((item) => `
+                        <div class="item">
+                          <div class="item-top">
+                            <span class="badge">${item.score}</span>
+                            <span class="source">${item.source}</span>
+                          </div>
+                          <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
+                          <div class="summary">${item.summary || ""}</div>
+                        </div>
+                      `).join("") : `<div class="empty">Keine deutschlandweiten Treffer verfuegbar</div>`}
+                    </div>
+                  </div>
                 </div>
               `,
               this._panelState.headlines

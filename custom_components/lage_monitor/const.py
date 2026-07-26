@@ -43,6 +43,8 @@ DEFAULT_ALERT_RADIUS_KM = 50
 
 ATTR_ALERTS = "alerts"
 ATTR_HEADLINES = "headlines"
+ATTR_LOCAL_HEADLINES = "local_headlines"
+ATTR_GERMANY_HEADLINES = "germany_headlines"
 ATTR_SOURCES = "sources"
 ATTR_LAST_UPDATE = "last_update"
 ATTR_SCORE_BREAKDOWN = "score_breakdown"

@@ -71,6 +71,8 @@ class LageSnapshot:
     military_signal_score: int
     stability_index: int
     headlines: list[dict]
+    local_headlines: list[dict]
+    germany_headlines: list[dict]
     alerts: list[dict]
     map_markers: list[dict]
     military_items: list[dict]
@@ -216,6 +218,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             scored.extend(self._alerts_to_scored_items(alerts))
         scored = self._apply_focus_filter(scored, focus_mode, local_keywords)
         scored.sort(key=lambda item: item["score"], reverse=True)
+        local_headlines = self._build_local_headlines(scored, alerts, local_keywords, news_limit)
+        germany_headlines = self._build_germany_headlines(scored, local_keywords, news_limit)
 
         germany_score = min(
             100,
@@ -266,6 +270,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             military_signal_score=military_signal,
             stability_index=stability_index,
             headlines=scored[:news_limit],
+            local_headlines=local_headlines,
+            germany_headlines=germany_headlines,
             alerts=alerts[: min(len(alerts), 15)],
             map_markers=map_markers,
             military_items=military_items,
@@ -314,6 +320,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             military_signal_score=0,
             stability_index=100,
             headlines=[],
+            local_headlines=[],
+            germany_headlines=[],
             alerts=[],
             map_markers=[],
             military_items=[],
@@ -397,6 +405,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         unique: dict[str, dict] = {}
         for alert in alerts:
+            if self._is_all_clear_alert(alert):
+                continue
             key = str(alert.get("id") or alert.get("title"))
             unique[key] = alert
 
@@ -928,6 +938,47 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             )
         return items
 
+    def _build_local_headlines(
+        self,
+        scored: list[dict],
+        alerts: list[dict],
+        local_keywords: list[str],
+        limit: int,
+    ) -> list[dict]:
+        """Build a strict local-only list from local keyword hits and local alerts."""
+        items: list[dict] = []
+        seen: set[str] = set()
+        for item in self._alerts_to_scored_items(alerts):
+            key = str(item.get("link") or item.get("title") or "")
+            if key and key not in seen:
+                seen.add(key)
+                items.append(item)
+        for item in scored:
+            if not self._matches_local_keywords(item, local_keywords):
+                continue
+            key = str(item.get("link") or item.get("title") or "")
+            if key and key not in seen:
+                seen.add(key)
+                items.append(item)
+        items.sort(key=lambda item: item["score"], reverse=True)
+        return items[:limit]
+
+    def _build_germany_headlines(
+        self,
+        scored: list[dict],
+        local_keywords: list[str],
+        limit: int,
+    ) -> list[dict]:
+        """Build a Germany-wide list without local-only items."""
+        items = [
+            item
+            for item in scored
+            if item.get("region") == "de"
+            and item.get("source") != "police"
+            and not self._matches_local_keywords(item, local_keywords)
+        ]
+        return items[:limit]
+
     def _national_priority_matches(self, text: str) -> list[str]:
         """Return terms that make a story nationally relevant in local mode."""
         haystack = str(text or "").lower()
@@ -963,6 +1014,29 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 item["score"] += 4
                 filtered.append(item)
         return filtered
+
+    def _matches_local_keywords(self, item: dict, local_keywords: list[str]) -> bool:
+        """Check whether an item matches the configured local terms."""
+        if not local_keywords:
+            return False
+        haystack = f"{item.get('title', '')} {item.get('summary', '')}".lower()
+        return any(keyword.lower() in haystack for keyword in local_keywords)
+
+    def _is_all_clear_alert(self, alert: dict) -> bool:
+        """Filter out all-clear messages from official warning sources."""
+        haystack = " ".join(
+            str(alert.get(field) or "")
+            for field in ("title", "summary", "severity", "source")
+        ).lower()
+        return any(
+            token in haystack
+            for token in (
+                "entwarnung",
+                "warnung aufgehoben",
+                "aufhebung",
+                "all clear",
+            )
+        )
 
     def _get_home_coordinates(self) -> tuple[float | None, float | None]:
         """Read Home Assistant home coordinates."""
