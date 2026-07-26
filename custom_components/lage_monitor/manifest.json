@@ -10,12 +10,12 @@
     "http",
     "lovelace"
   ],
-  "documentation": "https://github.com/koala73/worldmonitor",
+  "documentation": "https://github.com/SniperWCW/Worldmonitor",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "loggers": [
     "custom_components.lage_monitor"
   ],
   "requirements": [],
-  "version": "0.1.25"
+  "version": "0.1.27"
 }
