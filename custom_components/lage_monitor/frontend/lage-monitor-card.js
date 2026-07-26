@@ -203,6 +203,42 @@ const CARD_STYLE = `
     font-size: 0.82rem;
     line-height: 1.4;
   }
+  .map-selection {
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(239, 246, 255, 0.82);
+    border: 1px solid rgba(37, 99, 235, 0.16);
+  }
+  .map-selection-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .map-selection-items {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .map-selection-item {
+    padding-top: 8px;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    font-size: 0.86rem;
+    line-height: 1.35;
+  }
+  .map-selection-item a {
+    color: var(--primary-color, #1d4ed8);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .map-selection-item a:hover {
+    text-decoration: underline;
+  }
+  .map-selection-meta {
+    color: var(--secondary-text-color);
+    font-size: 0.76rem;
+    margin-top: 3px;
+  }
   .panel.collapsible {
     overflow: hidden;
   }
@@ -564,6 +600,20 @@ function resolveAlertCount(rawState, alertItems) {
   return entityCount;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function safeHttpLink(value) {
+  const link = String(value ?? "").trim();
+  return /^https?:\/\//i.test(link) ? link : "";
+}
+
 function buildMapPoints(markers, homeCenter) {
   const points = [];
   for (const marker of markers) {
@@ -573,6 +623,7 @@ function buildMapPoints(markers, homeCenter) {
       continue;
     }
     points.push({
+      key: marker.key || `${marker.kind || "cluster"}:${lat}:${lon}`,
       latitude: lat,
       longitude: lon,
       title: marker.title || "Warnung",
@@ -581,6 +632,7 @@ function buildMapPoints(markers, homeCenter) {
       count: Number(marker.count) || 1,
       kind: marker.kind || "cluster",
       titles: Array.isArray(marker.titles) ? marker.titles : [],
+      items: Array.isArray(marker.items) ? marker.items : [],
       variant: marker.kind === "home" ? "secondary" : ""
     });
   }
@@ -588,6 +640,7 @@ function buildMapPoints(markers, homeCenter) {
   if (!points.some((point) => point.kind === "home") && Array.isArray(homeCenter) && homeCenter.length === 2) {
     const [lat, lon] = homeCenter;
     points.push({
+      key: `home:${lat}:${lon}`,
       latitude: lat,
       longitude: lon,
       title: "Home-Position",
@@ -596,6 +649,7 @@ function buildMapPoints(markers, homeCenter) {
       count: 1,
       kind: "home",
       titles: [],
+      items: [],
       variant: "secondary"
     });
   }
@@ -638,6 +692,7 @@ class LageMonitorCard extends HTMLElement {
     this._mapResizeObserver = null;
     this._mapHost = null;
     this._mapRenderToken = 0;
+    this._selectedMapPointKey = "";
   }
 
   setConfig(config) {
@@ -719,6 +774,7 @@ class LageMonitorCard extends HTMLElement {
                 <div class="panel-body">
                   <div id="map" style="height:${Number(config.map_height) || 320}px; --lage-monitor-map-height:${Number(config.map_height) || 320}px"></div>
                   <div class="map-status">${mapStatus}</div>
+                  <div class="map-selection" id="map-selection"></div>
                 </div>
               </div>
             ` : ""}
@@ -802,11 +858,13 @@ class LageMonitorCard extends HTMLElement {
       points: mapPoints.map((point) => ({
         latitude: Number(point.latitude),
         longitude: Number(point.longitude),
+        key: point.key || "",
         kind: point.kind || "",
         count: Number(point.count) || 0,
         source: point.source || "",
         severity: point.severity || "",
-        titles: Array.isArray(point.titles) ? point.titles.slice(0, 3) : []
+        titles: Array.isArray(point.titles) ? point.titles.slice(0, 3) : [],
+        items: Array.isArray(point.items) ? point.items.slice(0, 5) : []
       }))
     });
     const markupChanged = this._lastMarkup !== markup;
@@ -846,6 +904,43 @@ class LageMonitorCard extends HTMLElement {
         this.hass = this._hass;
       });
     });
+  }
+
+  _setMapSelection(point, markerCount) {
+    const selection = this.shadowRoot.getElementById("map-selection");
+    if (!selection) {
+      return;
+    }
+    if (!point) {
+      this._selectedMapPointKey = "";
+      selection.innerHTML = `<div class="empty">Keinen Kartenpunkt ausgewaehlt.</div>`;
+      return;
+    }
+
+    this._selectedMapPointKey = point.key || "";
+    const items = Array.isArray(point.items) && point.items.length
+      ? point.items
+      : point.titles.map((title) => ({ title }));
+    const label = point.kind === "home"
+      ? "Home-Position"
+      : `${point.count} Meldung${point.count === 1 ? "" : "en"} an diesem Punkt`;
+    const itemMarkup = items.length
+      ? items.slice(0, 5).map((item) => {
+          const title = escapeHtml(item.title || "Warnung");
+          const link = safeHttpLink(item.link);
+          const titleMarkup = link
+            ? `<a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">${title}</a>`
+            : `<span>${title}</span>`;
+          const meta = [item.source, item.severity].filter(Boolean).map(escapeHtml).join(" | ");
+          return `<div class="map-selection-item">${titleMarkup}${meta ? `<div class="map-selection-meta">${meta}</div>` : ""}</div>`;
+        }).join("")
+      : `<div class="empty">Zu diesem Kartenpunkt sind keine Detailmeldungen verfuegbar.</div>`;
+
+    selection.innerHTML = `
+      <div class="map-selection-title">${escapeHtml(point.title || label)}</div>
+      <div class="map-status">${escapeHtml(point.source || label)}${markerCount ? ` | ${markerCount} Kartenpunkte gesamt` : ""}</div>
+      <div class="map-selection-items">${itemMarkup}</div>
+    `;
   }
 
   async _renderMap(points, homeCenter, zoom) {
@@ -892,6 +987,12 @@ class LageMonitorCard extends HTMLElement {
         this._mapMarkersLayer.clearLayers();
       }
 
+      const selectedPoint = points.find((point) => point.key === this._selectedMapPointKey)
+        || points.find((point) => point.kind !== "home")
+        || points.find((point) => point.kind === "home")
+        || null;
+      this._setMapSelection(selectedPoint, getRealMarkerCount(points));
+
       const bounds = [];
       for (const point of points) {
         const lat = Number(point.latitude);
@@ -900,7 +1001,7 @@ class LageMonitorCard extends HTMLElement {
           continue;
         }
         if (point.kind === "home") {
-          L.circleMarker([lat, lon], {
+          const marker = L.circleMarker([lat, lon], {
             radius: 8,
             color: "#ffffff",
             weight: 3,
@@ -910,25 +1011,41 @@ class LageMonitorCard extends HTMLElement {
             <strong>Home</strong><br>
             ${point.severity || "Home Assistant Fokus"}
           `);
+          marker.on("click", () => this._setMapSelection(point, getRealMarkerCount(points)));
+          if (point.key === this._selectedMapPointKey) {
+            marker.openPopup();
+          }
           bounds.push([lat, lon]);
           continue;
         }
 
         const radius = Math.min(22, 7 + Math.sqrt(Math.max(1, point.count || 1)) * 3.5);
-        const titles = point.titles?.length
-          ? `<br>${point.titles.slice(0, 3).join("<br>")}`
-          : "";
-        L.circleMarker([lat, lon], {
+        const items = Array.isArray(point.items) && point.items.length
+          ? point.items
+          : point.titles.map((title) => ({ title }));
+        const popupItems = items.slice(0, 3).map((item) => {
+          const title = escapeHtml(item.title || "Warnung");
+          const link = safeHttpLink(item.link);
+          return link
+            ? `<br><a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">${title}</a>`
+            : `<br>${title}`;
+        }).join("");
+        const marker = L.circleMarker([lat, lon], {
           radius,
           color: "#b91c1c",
           weight: 2,
           fillColor: "#f97316",
-          fillOpacity: 0.78
+          fillOpacity: 0.78,
+          bubblingMouseEvents: false
         }).addTo(this._mapMarkersLayer).bindPopup(`
           <strong>${point.count} Meldung${point.count === 1 ? "" : "en"} heute</strong><br>
-          ${point.source || ""}
-          ${titles}
+          ${escapeHtml(point.source || "")}
+          ${popupItems}
         `);
+        marker.on("click", () => this._setMapSelection(point, getRealMarkerCount(points)));
+        if (point.key === this._selectedMapPointKey) {
+          marker.openPopup();
+        }
         bounds.push([lat, lon]);
       }
 

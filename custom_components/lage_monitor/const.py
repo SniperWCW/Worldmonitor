@@ -57,6 +57,7 @@ WARNUNG_BUND_BASE_URL = "https://warnung.bund.de/api31"
 WARNUNG_BUND_ASSETS_BASE_URL = "https://warnung.bund.de/assets/json"
 
 GERMAN_NEWS_FEEDS: dict[str, str] = {
+    "tagesschau_all": "https://www.tagesschau.de/infoservices/alle-meldungen-100~rss2.xml",
     "tagesschau_inland": "https://www.tagesschau.de/inland/index~rss2.xml",
     "tagesschau_ausland": "https://www.tagesschau.de/ausland/index~rss2.xml",
     "ntv_top": "https://www.n-tv.de/rss",
@@ -103,6 +104,26 @@ KEYWORD_WEIGHTS: dict[str, int] = {
     "gefährdung": 6,
     "gefährlich": 5,
 }
+
+# These events must remain visible even when the monitor is focused on Home.
+NATIONAL_PRIORITY_KEYWORDS: tuple[str, ...] = (
+    "anschlag",
+    "attentat",
+    "terror",
+    "explosion",
+    "detonation",
+    "bomb",
+    "spreng",
+    "amok",
+    "geiselnahme",
+    "messerangriff",
+    "menschenmenge",
+    "massenpanik",
+    "ausschreitungen",
+    "unruhen",
+    "gewalttat",
+    "angriff",
+)
 
 MILITARY_KEYWORDS: dict[str, int] = {
     "bundeswehr": 6,

@@ -47,6 +47,7 @@ from .const import (
     GERMAN_NEWS_FEEDS,
     KEYWORD_WEIGHTS,
     MILITARY_KEYWORDS,
+    NATIONAL_PRIORITY_KEYWORDS,
     POLICE_COUNT_MODE_ALL,
     PRESSEPORTAL_FEEDS,
     WARNUNG_BUND_ASSETS_BASE_URL,
@@ -179,21 +180,33 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         if self.entry.options.get(CONF_INCLUDE_PRESS, self.entry.data[CONF_INCLUDE_PRESS]):
             for source, url in self._iter_press_feeds(focus_mode):
-                items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
+                items, status = await self._safe_fetch_feed(
+                    url,
+                    source,
+                    self._feed_fetch_limit(news_limit),
+                )
                 headlines.extend(items)
                 source_status[source] = status
             for index, url in enumerate(custom_press_feeds, start=1):
                 source = f"custom_press_{index}"
-                items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
+                items, status = await self._safe_fetch_feed(
+                    url,
+                    source,
+                    self._feed_fetch_limit(news_limit),
+                )
                 headlines.extend(items)
                 source_status[source] = status
 
-        if (
-            focus_mode != FOCUS_MODE_LOCAL
-            and self.entry.options.get(CONF_INCLUDE_NEWS, self.entry.data[CONF_INCLUDE_NEWS])
-        ):
+        if self.entry.options.get(CONF_INCLUDE_NEWS, self.entry.data[CONF_INCLUDE_NEWS]):
             for source, url in GERMAN_NEWS_FEEDS.items():
-                items, status = await self._safe_fetch_feed(url, source, max(5, news_limit // 3))
+                # Keep one nationwide source available even in local focus mode.
+                if focus_mode == FOCUS_MODE_LOCAL and source != "tagesschau_all":
+                    continue
+                items, status = await self._safe_fetch_feed(
+                    url,
+                    source,
+                    self._feed_fetch_limit(news_limit),
+                )
                 headlines.extend(items)
                 source_status[source] = status
 
@@ -415,8 +428,11 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     def _score_item(self, item: FeedItem) -> dict:
         haystack = f"{item.title} {item.summary}".lower()
         matched = [keyword for keyword in KEYWORD_WEIGHTS if keyword in haystack]
+        priority_matches = self._national_priority_matches(haystack)
         military_matched = [keyword for keyword in MILITARY_KEYWORDS if keyword in haystack]
         score = sum(KEYWORD_WEIGHTS[keyword] for keyword in matched)
+        if priority_matches:
+            score = max(score, 24)
         military_score = sum(MILITARY_KEYWORDS[keyword] for keyword in military_matched)
         region = "de"
         if item.source == "tagesschau_ausland":
@@ -439,7 +455,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "published": item.published,
             "source": item.source,
             "score": min(score, 100),
-            "keywords": matched,
+            "keywords": list(dict.fromkeys([*matched, *priority_matches])),
+            "priority_keywords": priority_matches,
             "military_keywords": military_matched,
             "military_score": min(military_score, 100),
             "region": region,
@@ -812,10 +829,20 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             clustered.setdefault(key, []).append(alert)
 
         for (lat, lon), cluster_alerts in clustered.items():
-            top_titles = [item.get("title") or "Warnung" for item in cluster_alerts[:3]]
+            cluster_items = [
+                {
+                    "title": str(item.get("title") or "Warnung"),
+                    "source": str(item.get("source") or ""),
+                    "severity": str(item.get("severity") or ""),
+                    "link": str(item.get("link") or ""),
+                }
+                for item in cluster_alerts[:5]
+            ]
+            top_titles = [item["title"] for item in cluster_items[:3]]
             sources = sorted({str(item.get("source") or "") for item in cluster_alerts if item.get("source")})
             markers.append(
                 {
+                    "key": f"cluster:{round(lat, 5)}:{round(lon, 5)}",
                     "kind": "cluster",
                     "title": top_titles[0],
                     "source": ", ".join(sources[:3]),
@@ -824,6 +851,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "longitude": round(lon, 5),
                     "count": len(cluster_alerts),
                     "titles": top_titles,
+                    "items": cluster_items,
                 }
             )
 
@@ -831,6 +859,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         if isinstance(home_lat, (int, float)) and isinstance(home_lon, (int, float)):
             markers.append(
                 {
+                    "key": f"home:{round(float(home_lat), 5)}:{round(float(home_lon), 5)}",
                     "kind": "home",
                     "title": "Home",
                     "source": "zone.home",
@@ -838,11 +867,16 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "latitude": float(home_lat),
                     "longitude": float(home_lon),
                     "count": 1,
+                    "items": [],
                 }
             )
 
         markers.sort(key=lambda item: (item.get("kind") == "home", item.get("count", 0)), reverse=True)
         return markers
+
+    def _feed_fetch_limit(self, news_limit: int) -> int:
+        """Fetch deeper into feeds so later scoring can still surface relevant articles."""
+        return max(12, int(news_limit or 0))
 
     def _filter_alerts_for_today(self, alerts: list[dict]) -> list[dict]:
         """Keep only alerts from today in the Home Assistant timezone when possible."""
@@ -894,6 +928,11 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             )
         return items
 
+    def _national_priority_matches(self, text: str) -> list[str]:
+        """Return terms that make a story nationally relevant in local mode."""
+        haystack = str(text or "").lower()
+        return [keyword for keyword in NATIONAL_PRIORITY_KEYWORDS if keyword in haystack]
+
     def _iter_press_feeds(self, focus_mode: str) -> Iterable[tuple[str, str]]:
         """Return the press feeds relevant for the selected mode."""
         if focus_mode == FOCUS_MODE_LOCAL:
@@ -915,7 +954,12 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         keywords_lower = [keyword.lower() for keyword in local_keywords]
         for item in items:
             haystack = f"{item['title']} {item['summary']}".lower()
-            if any(keyword in haystack for keyword in keywords_lower):
+            priority_matches = self._national_priority_matches(haystack)
+            if priority_matches:
+                item["score"] = max(int(item.get("score", 0)), 24)
+                item["priority_keywords"] = priority_matches
+                filtered.append(item)
+            elif any(keyword in haystack for keyword in keywords_lower):
                 item["score"] += 4
                 filtered.append(item)
         return filtered
