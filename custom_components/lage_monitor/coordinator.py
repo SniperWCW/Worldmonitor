@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
+from email.utils import parsedate_to_datetime
 import logging
 import math
 import re
@@ -265,6 +266,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 source_status[source] = status
 
         deduped = self._dedupe_items(headlines)
+        deduped = self._filter_recent_feed_items(deduped)
         scored = [self._score_item(item) for item in deduped]
         if focus_mode == FOCUS_MODE_LOCAL:
             scored.extend(self._alerts_to_scored_items(alerts))
@@ -523,6 +525,37 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             seen.add(key)
             unique.append(item)
         return unique
+
+    def _filter_recent_feed_items(self, items: list[FeedItem]) -> list[FeedItem]:
+        """Keep only feed items from today or yesterday when a date is available."""
+        cutoff_date = dt_util.now().date() - timedelta(days=1)
+        filtered: list[FeedItem] = []
+
+        for item in items:
+            published_dt = self._parse_feed_datetime(item.published)
+            if published_dt is None:
+                filtered.append(item)
+                continue
+            if dt_util.as_local(published_dt).date() >= cutoff_date:
+                filtered.append(item)
+
+        return filtered
+
+    def _parse_feed_datetime(self, value: str | None):
+        """Parse RSS/Atom publication timestamps to timezone-aware datetimes."""
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+
+        parsed = dt_util.parse_datetime(raw)
+        if parsed is not None:
+            return parsed if parsed.tzinfo is not None else dt_util.as_utc(parsed)
+
+        try:
+            parsed = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
+            return None
+        return parsed if parsed.tzinfo is not None else dt_util.as_utc(parsed)
 
     def _score_item(self, item: FeedItem) -> dict:
         haystack = f"{item.title} {item.summary}".lower()
