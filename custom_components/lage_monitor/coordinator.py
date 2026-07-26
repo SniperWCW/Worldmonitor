@@ -307,20 +307,15 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         military_signal_germany_risk = self._compute_military_signal(military_items_germany)
         military_signal_world_risk = self._compute_military_signal(military_items_world)
         military_signal_risk = max(military_signal_germany_risk, military_signal_world_risk)
-        stability_index = max(
-            0,
-            min(
-                100,
-                100
-                - (
-                    int(germany_risk_score * 0.55)
-                    + int(global_risk_score * 0.15)
-                    + high_priority * 3
-                    + min(military_signal_germany_risk // 5, 12)
-                    + min(military_signal_world_risk // 6, 10)
-                ),
-            ),
+        stability_deduction = min(
+            100,
+            int(germany_risk_score * 0.5)
+            + int(global_risk_score * 0.15)
+            + min(high_priority * 2, 10)
+            + int(military_signal_germany_risk * 0.15)
+            + int(military_signal_world_risk * 0.1),
         )
+        stability_index = max(0, 100 - stability_deduction)
         germany_score = 100 - germany_risk_score
         global_score = 100 - global_risk_score
         military_signal_germany = 100 - military_signal_germany_risk

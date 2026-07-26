@@ -91,12 +91,6 @@ const CARD_STYLE = `
     color: var(--secondary-text-color);
     font-size: 0.9rem;
   }
-  .score-state {
-    margin-top: 8px;
-    font-size: 0.84rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-  }
   .hero-side {
     display: grid;
     gap: 12px;
@@ -119,12 +113,6 @@ const CARD_STYLE = `
     font-size: 1.4rem;
     font-weight: 700;
     line-height: 1.1;
-  }
-  .metric-hint {
-    margin-top: 6px;
-    color: var(--secondary-text-color);
-    font-size: 0.76rem;
-    line-height: 1.35;
   }
   .grid {
     display: grid;
@@ -696,13 +684,12 @@ function formatLastUpdate(value) {
 }
 
 function renderMetric(title, value, options = {}) {
-  const { positiveHigh = false, hint = "", showOutOfHundred = false } = options;
+  const { positiveHigh = false, showOutOfHundred = false } = options;
   const state = getScoreState(value, positiveHigh);
   return `
     <div class="metric">
       <div class="metric-label">${title}</div>
       <div class="metric-value ${state.className}">${showOutOfHundred ? formatOutOfHundred(value) : value}</div>
-      <div class="metric-hint">${hint || state.label}</div>
     </div>
   `;
 }
@@ -837,7 +824,6 @@ class LageMonitorCard extends HTMLElement {
     const militarySignalGermany = attrs.military_signal_germany ?? "-";
     const militarySignalWorld = attrs.military_signal_world ?? "-";
     const stability = hass.states[config.stability_entity]?.state ?? "-";
-    const military = hass.states[config.military_entity]?.state ?? "-";
     const lastUpdate = formatLastUpdate(attrs.last_update);
     const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
     const homeCenter = getHomeCenter(hass);
@@ -855,19 +841,18 @@ class LageMonitorCard extends HTMLElement {
           <div class="hero">
             <div class="hero-main">
               <div class="title">${config.title}</div>
-              <div class="sub">Lageueberblick fuer Deutschland und relevante Ereignisse</div>
+              <div class="sub">Lageueberblick fuer Deutschland und relevante Ereignisse. 100 = gruen = gut, 0 = rot = kritisch.</div>
               <div class="score">
                 <div class="score-value ${germanyScoreState.className}">${formatOutOfHundred(stateObj.state)}</div>
                 <div class="score-label">Deutschland Lage-Score</div>
               </div>
-              <div class="score-state">${germanyScoreState.label}</div>
               <div class="status-line">Zuletzt aktualisiert: ${lastUpdate}</div>
             </div>
             <div class="hero-side">
-              ${renderMetric("Aktive Warnungen", activeAlerts, { positiveHigh: false, hint: "Mehr Warnungen bedeuten meist hoehere Lagebelastung." })}
-              ${renderMetric("Stabilitaet", stability, { positiveHigh: true, hint: "Hier ist 100 sicher und 0 kritisch.", showOutOfHundred: true })}
-              ${renderMetric("Militaersignal Deutschland", militarySignalGermany, { positiveHigh: true, hint: "Hier ist 100 sicher und 0 kritisch.", showOutOfHundred: true })}
-              ${renderMetric("Militaersignal Welt", militarySignalWorld, { positiveHigh: true, hint: "Hier ist 100 sicher und 0 kritisch.", showOutOfHundred: true })}
+              ${renderMetric("Aktive Warnungen", activeAlerts, { positiveHigh: false })}
+              ${renderMetric("Stabilitaet", stability, { positiveHigh: true, showOutOfHundred: true })}
+              ${renderMetric("Militaersignal Deutschland", militarySignalGermany, { positiveHigh: true, showOutOfHundred: true })}
+              ${renderMetric("Militaersignal Welt", militarySignalWorld, { positiveHigh: true, showOutOfHundred: true })}
             </div>
           </div>
           <div class="grid">
