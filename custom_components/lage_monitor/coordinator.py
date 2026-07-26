@@ -138,6 +138,9 @@ class LageSnapshot:
     diagnostics: dict[str, str | int | bool]
     last_update: str
     score_breakdown: dict[str, int]
+    analysis_summary: dict[str, str]
+    risk_drivers: list[dict]
+    score_trend: dict[str, str | int]
 
 
 class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
@@ -353,6 +356,33 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         military_signal_germany = 100 - military_signal_germany_risk
         military_signal_world = 100 - military_signal_world_risk
         military_signal = 100 - military_signal_risk
+        score_breakdown = {
+            "alerts": official_alert_risk,
+            "police_germany": germany_police_risk,
+            "news_germany": germany_news_risk,
+            "high_priority_germany": germany_high_priority_risk,
+            "military_signal": military_signal_risk,
+            "military_signal_germany": military_signal_germany_risk,
+            "military_signal_world": military_signal_world_risk,
+            "high_priority_items": high_priority * 5,
+            "police_items": police_items * 2,
+        }
+        risk_drivers = self._build_risk_drivers(
+            score_breakdown,
+            germany_headlines,
+            alerts,
+            military_signal_germany_risk,
+            military_signal_world_risk,
+        )
+        score_trend = self._build_score_trend(germany_score, stability_index)
+        analysis_summary = self._build_analysis_summary(
+            germany_score,
+            stability_index,
+            active_alerts=len(alerts),
+            military_signal_germany=military_signal_germany,
+            risk_drivers=risk_drivers,
+            germany_headlines=germany_headlines,
+        )
 
         keyword_counter: Counter[str] = Counter()
         for item in scored[:20]:
@@ -411,17 +441,10 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 "sources_ok": sum(1 for status in source_status.values() if status["ok"] is True),
             },
             last_update=iso_timestamp(),
-            score_breakdown={
-                "alerts": official_alert_risk,
-                "police_germany": germany_police_risk,
-                "news_germany": germany_news_risk,
-                "high_priority_germany": germany_high_priority_risk,
-                "military_signal": military_signal_risk,
-                "military_signal_germany": military_signal_germany_risk,
-                "military_signal_world": military_signal_world_risk,
-                "high_priority_items": high_priority * 5,
-                "police_items": police_items * 2,
-            },
+            score_breakdown=score_breakdown,
+            analysis_summary=analysis_summary,
+            risk_drivers=risk_drivers,
+            score_trend=score_trend,
         )
 
     def _empty_snapshot(self) -> LageSnapshot:
@@ -473,13 +496,145 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             last_update=iso_timestamp(),
             score_breakdown={
                 "alerts": 0,
+                "police_germany": 0,
+                "news_germany": 0,
+                "high_priority_germany": 0,
                 "military_signal": 0,
                 "military_signal_germany": 0,
                 "military_signal_world": 0,
                 "high_priority_items": 0,
                 "police_items": 0,
             },
+            analysis_summary={
+                "headline": "Keine aktuelle Lagebewertung verfuegbar.",
+                "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
+                "outlook": "Nach dem naechsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
+            },
+            risk_drivers=[],
+            score_trend={"delta": 0, "direction": "stable", "label": "Keine Vergleichsdaten"},
         )
+
+    def _build_score_trend(self, germany_score: int, stability_index: int) -> dict[str, str | int]:
+        """Compare the current snapshot against the previous one kept by the coordinator."""
+        previous = self.data
+        if previous is None:
+            return {"delta": 0, "direction": "stable", "label": "Keine Vergleichsdaten"}
+
+        delta = int(germany_score) - int(previous.germany_score)
+        if delta >= 4:
+            direction = "up"
+            label = f"+{delta} seit letztem Update"
+        elif delta <= -4:
+            direction = "down"
+            label = f"{delta} seit letztem Update"
+        else:
+            direction = "stable"
+            label = f"nahezu stabil ({delta:+d})"
+
+        stability_delta = int(stability_index) - int(previous.stability_index)
+        return {
+            "delta": delta,
+            "direction": direction,
+            "label": label,
+            "stability_delta": stability_delta,
+        }
+
+    def _build_risk_drivers(
+        self,
+        score_breakdown: dict[str, int],
+        germany_headlines: list[dict],
+        alerts: list[dict],
+        military_signal_germany_risk: int,
+        military_signal_world_risk: int,
+    ) -> list[dict]:
+        """Return the strongest current score drivers in descending order."""
+        drivers = [
+            {
+                "key": "alerts",
+                "label": "Amtliche Warnungen",
+                "value": int(score_breakdown.get("alerts", 0)),
+                "detail": f"{len(alerts)} aktive Warnungen",
+            },
+            {
+                "key": "news_germany",
+                "label": "Deutschland-News",
+                "value": int(score_breakdown.get("news_germany", 0)),
+                "detail": f"{len(germany_headlines)} relevante Deutschland-Treffer",
+            },
+            {
+                "key": "high_priority_germany",
+                "label": "Hochpriorisierte Ereignisse",
+                "value": int(score_breakdown.get("high_priority_germany", 0)),
+                "detail": "Anschlag-, Terror- und Gewaltcluster",
+            },
+            {
+                "key": "police_germany",
+                "label": "Polizei- und Blaulichtdruck",
+                "value": int(score_breakdown.get("police_germany", 0)),
+                "detail": "Relevante Polizeimeldungen in Deutschland",
+            },
+            {
+                "key": "military_world",
+                "label": "Militaersignal Welt",
+                "value": int(military_signal_world_risk),
+                "detail": "Globale militaerische Aktivitaet",
+            },
+            {
+                "key": "military_germany",
+                "label": "Militaersignal Deutschland",
+                "value": int(military_signal_germany_risk),
+                "detail": "Militaerische Signalbegriffe mit Deutschland-Bezug",
+            },
+        ]
+        ranked = [driver for driver in drivers if driver["value"] > 0]
+        ranked.sort(key=lambda driver: int(driver["value"]), reverse=True)
+        return ranked[:4]
+
+    def _build_analysis_summary(
+        self,
+        germany_score: int,
+        stability_index: int,
+        active_alerts: int,
+        military_signal_germany: int,
+        risk_drivers: list[dict],
+        germany_headlines: list[dict],
+    ) -> dict[str, str]:
+        """Build a concise text-based Lagebewertung from structured signals."""
+        top_driver = risk_drivers[0] if risk_drivers else None
+        headline = "Deutschland aktuell ruhig."
+        if germany_score <= 25:
+            headline = "Deutschland aktuell klar angespannt."
+        elif germany_score <= 45:
+            headline = "Deutschland aktuell spuerbar belastet."
+        elif germany_score <= 65:
+            headline = "Deutschland aktuell erhoeht aufmerksam, aber nicht akut kritisch."
+
+        if stability_index <= 35:
+            headline += " Die Stabilitaet ist deutlich unter Normalniveau."
+        elif stability_index <= 55:
+            headline += " Die Stabilitaet bleibt fragil."
+
+        if top_driver is None:
+            drivers = "Aktuell fehlen dominante Risikotreiber in den Eingangsdaten."
+        else:
+            drivers = f"Haupttreiber ist {top_driver['label'].lower()} ({top_driver['detail']})."
+            if germany_headlines:
+                top_title = str(germany_headlines[0].get("title") or "").strip()
+                if top_title:
+                    drivers += f" Praegendes Thema: {top_title}"
+
+        if active_alerts >= 10 and military_signal_germany >= 70:
+            outlook = "Amtliche Warnlagen sind vorhanden, waehrend das Militaersignal in Deutschland derzeit nicht zusaetzlich eskaliert."
+        elif military_signal_germany < 50:
+            outlook = "Neben der Nachrichtenlage sollte besonders beobachtet werden, ob sich das Deutschland-bezogene Militaersignal weiter verschaerft."
+        else:
+            outlook = "Entscheidend fuer die naechsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
+
+        return {
+            "headline": headline,
+            "drivers": drivers,
+            "outlook": outlook,
+        }
 
     def _compute_military_signal(self, items: list[dict]) -> int:
         """Return a capped military risk score where higher means more critical."""

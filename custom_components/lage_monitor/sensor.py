@@ -9,6 +9,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    ATTR_ANALYSIS_SUMMARY,
     ATTR_ALERTS,
     ATTR_DIAGNOSTICS,
     ATTR_GERMANY_HEADLINES,
@@ -21,7 +22,9 @@ from .const import (
     ATTR_MILITARY_ITEMS_WORLD,
     ATTR_MILITARY_SIGNAL_GERMANY,
     ATTR_MILITARY_SIGNAL_WORLD,
+    ATTR_RISK_DRIVERS,
     ATTR_SCORE_BREAKDOWN,
+    ATTR_SCORE_TREND,
     ATTR_SOURCE_STATUS,
     ATTR_SOURCES,
     ATTR_TOP_KEYWORDS,
@@ -93,6 +96,7 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
             }
         return {
             ATTR_ALERTS: self.coordinator.data.alerts,
+            ATTR_ANALYSIS_SUMMARY: self.coordinator.data.analysis_summary,
             ATTR_HEADLINES: self.coordinator.data.headlines,
             ATTR_LOCAL_HEADLINES: self.coordinator.data.local_headlines,
             ATTR_GERMANY_HEADLINES: self.coordinator.data.germany_headlines,
@@ -106,6 +110,8 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
             ATTR_DIAGNOSTICS: self.coordinator.data.diagnostics,
             ATTR_SOURCES: self.coordinator.data.sources,
             ATTR_LAST_UPDATE: self.coordinator.data.last_update,
+            ATTR_RISK_DRIVERS: self.coordinator.data.risk_drivers,
             ATTR_SCORE_BREAKDOWN: self.coordinator.data.score_breakdown,
+            ATTR_SCORE_TREND: self.coordinator.data.score_trend,
             ATTR_TOP_KEYWORDS: self.coordinator.data.top_keywords,
         }

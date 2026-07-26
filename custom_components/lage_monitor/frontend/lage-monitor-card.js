@@ -307,6 +307,86 @@ const CARD_STYLE = `
     font-size: 0.76rem;
     margin-top: 3px;
   }
+  .analysis-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.9fr);
+    gap: 16px;
+  }
+  .analysis-copy {
+    display: grid;
+    gap: 10px;
+  }
+  .analysis-lead {
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.45;
+  }
+  .analysis-text {
+    color: var(--secondary-text-color);
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+  .analysis-side {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+  }
+  .trend-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    background: rgba(15, 23, 42, 0.08);
+  }
+  .trend-pill.up {
+    color: #15803d;
+    background: rgba(34, 197, 94, 0.14);
+  }
+  .trend-pill.down {
+    color: #b91c1c;
+    background: rgba(239, 68, 68, 0.14);
+  }
+  .trend-pill.stable {
+    color: #475569;
+    background: rgba(148, 163, 184, 0.14);
+  }
+  .driver-list {
+    display: grid;
+    gap: 10px;
+  }
+  .driver-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 10px;
+    align-items: start;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+  }
+  .driver-value {
+    min-width: 2rem;
+    color: #b91c1c;
+    font-size: 1rem;
+    font-weight: 800;
+  }
+  .driver-body {
+    min-width: 0;
+  }
+  .driver-title {
+    font-size: 0.88rem;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .driver-detail {
+    color: var(--secondary-text-color);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    margin-top: 2px;
+  }
   .panel.collapsible {
     overflow: hidden;
   }
@@ -518,7 +598,8 @@ const CARD_STYLE = `
   @media (max-width: 640px) {
     .hero,
     .editor-grid,
-    .split-grid {
+    .split-grid,
+    .analysis-grid {
       grid-template-columns: 1fr;
     }
     .shell {
@@ -561,6 +642,9 @@ const CARD_STYLE = `
     .item-meta {
       font-size: 0.88rem;
       line-height: 1.4;
+    }
+    .analysis-lead {
+      font-size: 0.96rem;
     }
   }
   @media (max-width: 420px) {
@@ -783,6 +867,17 @@ function renderMetric(title, value, options = {}) {
   `;
 }
 
+function getTrendState(trend) {
+  const direction = String(trend?.direction || "stable");
+  if (direction === "up") {
+    return { className: "up", label: "Verbessert" };
+  }
+  if (direction === "down") {
+    return { className: "down", label: "Verschlechtert" };
+  }
+  return { className: "stable", label: "Stabil" };
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -912,6 +1007,9 @@ class LageMonitorCard extends HTMLElement {
     const militaryItems = (attrs.military_items || []).slice(0, 10);
     const militarySignalGermany = attrs.military_signal_germany ?? "-";
     const militarySignalWorld = attrs.military_signal_world ?? "-";
+    const analysisSummary = attrs.analysis_summary || {};
+    const riskDrivers = (attrs.risk_drivers || []).slice(0, 4);
+    const scoreTrend = attrs.score_trend || {};
     const stability = hass.states[config.stability_entity]?.state ?? "-";
     const lastUpdate = formatLastUpdate(attrs.last_update);
     const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
@@ -922,6 +1020,7 @@ class LageMonitorCard extends HTMLElement {
       ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus aktuellen Warnungen und News mit Ortsbezug.`
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder News mit Ortsbezug vor.";
     const germanyScoreState = getScoreState(stateObj.state, true);
+    const trendState = getTrendState(scoreTrend);
 
     const markup = `
       <style>${CARD_STYLE}</style>
@@ -945,6 +1044,37 @@ class LageMonitorCard extends HTMLElement {
             </div>
           </div>
           <div class="grid">
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">KI Lagebewertung</div>
+                <div class="panel-note">
+                  <span class="trend-pill ${trendState.className}">${trendState.label}: ${escapeHtml(scoreTrend.label || "Keine Vergleichsdaten")}</span>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="analysis-grid">
+                  <div class="analysis-copy">
+                    <div class="analysis-lead">${escapeHtml(analysisSummary.headline || "Keine aktuelle Lagebewertung verfuegbar.")}</div>
+                    <div class="analysis-text">${escapeHtml(analysisSummary.drivers || "")}</div>
+                    <div class="analysis-text">${escapeHtml(analysisSummary.outlook || "")}</div>
+                  </div>
+                  <div class="analysis-side">
+                    <div class="split-section-title">Staerkste Treiber</div>
+                    <div class="driver-list">
+                      ${riskDrivers.length ? riskDrivers.map((driver) => `
+                        <div class="driver-item">
+                          <div class="driver-value">${escapeHtml(driver.value)}</div>
+                          <div class="driver-body">
+                            <div class="driver-title">${escapeHtml(driver.label || "Treiber")}</div>
+                            <div class="driver-detail">${escapeHtml(driver.detail || "")}</div>
+                          </div>
+                        </div>
+                      `).join("") : `<div class="empty">Noch keine aktuellen Treiber verfuegbar</div>`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             ${config.show_map ? `
               <div class="panel">
                 <div class="panel-head">

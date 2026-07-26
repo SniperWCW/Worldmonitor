@@ -30,11 +30,14 @@ Custom Home Assistant integration plus Lovelace card for a German and global sit
 The richest attributes live on the Germany score entity:
 
 - `alerts`
+- `analysis_summary`
 - `headlines`
 - `sources`
 - `last_update`
 - `map_markers`
 - `military_items`
+- `risk_drivers`
+- `score_trend`
 - `source_status`
 - `diagnostics`
 - `score_breakdown`
@@ -130,3 +133,5 @@ military_entity: sensor.military_signal_score
 3. Add geo-filtering for Germany states or local radius
 4. Add OpenSky-backed air activity when you want real movement data instead of keyword-only military signals
 5. Add push automations when the score or keyword profile crosses a threshold
+
+See also `ROADMAP.md` for the current project roadmap and planned intelligence features.
