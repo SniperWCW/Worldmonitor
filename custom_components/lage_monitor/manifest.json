@@ -2,7 +2,7 @@
   "domain": "lage_monitor",
   "name": "Lage Monitor",
   "codeowners": [
-    "@koala73"
+    "@SniperWCW"
   ],
   "config_flow": true,
   "dependencies": [
