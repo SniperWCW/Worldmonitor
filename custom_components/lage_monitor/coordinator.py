@@ -286,13 +286,41 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         )
         germany_headlines = self._build_germany_headlines(scored, local_keywords, news_limit)
 
-        official_alert_risk = min(45, sum(self._score_official_alert(alert) for alert in alerts))
-        germany_news_risk = sum(
-            item["score"]
-            for item in scored
-            if item["region"] == "de" and item["source"] not in OFFICIAL_ALERT_SOURCES
-        ) // 3
-        germany_risk_score = min(100, official_alert_risk + germany_news_risk)
+        official_alert_risk = min(35, sum(self._score_official_alert(alert) for alert in alerts))
+        germany_police_risk = min(
+            20,
+            sum(
+                item["score"]
+                for item in scored
+                if item["region"] == "de" and item["source"] == "presseportal_blaulicht"
+            )
+            // 8,
+        )
+        germany_news_risk = min(
+            20,
+            sum(
+                item["score"]
+                for item in scored
+                if item["region"] == "de"
+                and item["source"] not in OFFICIAL_ALERT_SOURCES
+                and item["source"] != "presseportal_blaulicht"
+            )
+            // 10,
+        )
+        germany_high_priority_risk = min(
+            15,
+            sum(
+                3
+                for item in scored
+                if item["region"] == "de"
+                and item["source"] not in OFFICIAL_ALERT_SOURCES
+                and int(item.get("score") or 0) >= 12
+            ),
+        )
+        germany_risk_score = min(
+            100,
+            official_alert_risk + germany_police_risk + germany_news_risk + germany_high_priority_risk,
+        )
         global_risk_score = min(100, sum(item["score"] for item in scored[:10]) // 2)
         high_priority = sum(1 for item in scored if item["score"] >= 12)
         police_raw_items = sum(1 for item in deduped if item.source == "presseportal_blaulicht")
@@ -385,6 +413,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             last_update=iso_timestamp(),
             score_breakdown={
                 "alerts": official_alert_risk,
+                "police_germany": germany_police_risk,
+                "news_germany": germany_news_risk,
+                "high_priority_germany": germany_high_priority_risk,
                 "military_signal": military_signal_risk,
                 "military_signal_germany": military_signal_germany_risk,
                 "military_signal_world": military_signal_world_risk,
