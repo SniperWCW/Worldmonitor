@@ -57,6 +57,54 @@ from .feed import FeedItem, fetch_feed, fetch_json, iso_timestamp
 
 _LOGGER = logging.getLogger(__name__)
 COORD_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
+NEWS_PLACE_COORDINATES: dict[str, tuple[float, float]] = {
+    "aachen": (50.7753, 6.0839),
+    "augsburg": (48.3705, 10.8978),
+    "berlin": (52.52, 13.405),
+    "bielefeld": (52.0302, 8.5325),
+    "bochum": (51.4818, 7.2162),
+    "bonn": (50.7374, 7.0982),
+    "bremen": (53.0793, 8.8017),
+    "bremervorde": (53.4842, 9.1419),
+    "chemnitz": (50.8278, 12.9214),
+    "cologne": (50.9375, 6.9603),
+    "dortmund": (51.5136, 7.4653),
+    "dresden": (51.0504, 13.7373),
+    "duisburg": (51.4344, 6.7623),
+    "dusseldorf": (51.2277, 6.7735),
+    "erfurt": (50.9848, 11.0299),
+    "essen": (51.4556, 7.0116),
+    "frankfurt": (50.1109, 8.6821),
+    "freiburg": (47.999, 7.8421),
+    "gelsenkirchen": (51.5177, 7.0857),
+    "halle": (51.4825, 11.97),
+    "hamburg": (53.5511, 9.9937),
+    "hannover": (52.3759, 9.732),
+    "karlsruhe": (49.0069, 8.4037),
+    "kassel": (51.3127, 9.4797),
+    "kiel": (54.3233, 10.1228),
+    "koblenz": (50.3569, 7.5889),
+    "koln": (50.9375, 6.9603),
+    "leipzig": (51.3397, 12.3731),
+    "lubeck": (53.8655, 10.6866),
+    "magdeburg": (52.1205, 11.6276),
+    "mainz": (49.9929, 8.2473),
+    "mannheim": (49.4875, 8.466),
+    "munchen": (48.1351, 11.582),
+    "munich": (48.1351, 11.582),
+    "nurnberg": (49.4521, 11.0767),
+    "osnabruck": (52.2799, 8.0472),
+    "potsdam": (52.3906, 13.0645),
+    "regensburg": (49.0134, 12.1016),
+    "rostock": (54.0924, 12.0991),
+    "saarbrucken": (49.2402, 6.9969),
+    "schwerin": (53.6355, 11.4012),
+    "stuttgart": (48.7758, 9.1829),
+    "ulm": (48.4011, 9.9876),
+    "wiesbaden": (50.0782, 8.2398),
+    "wuppertal": (51.2562, 7.1508),
+    "deutschland": (51.1657, 10.4515),
+}
 
 
 @dataclass(slots=True)
@@ -69,6 +117,8 @@ class LageSnapshot:
     police_items: int
     high_priority_items: int
     military_signal_score: int
+    military_signal_germany: int
+    military_signal_world: int
     stability_index: int
     headlines: list[dict]
     local_headlines: list[dict]
@@ -76,6 +126,8 @@ class LageSnapshot:
     alerts: list[dict]
     map_markers: list[dict]
     military_items: list[dict]
+    military_items_germany: list[dict]
+    military_items_world: list[dict]
     top_keywords: list[dict]
     sources: list[str]
     source_status: dict[str, dict]
@@ -218,7 +270,15 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             scored.extend(self._alerts_to_scored_items(alerts))
         scored = self._apply_focus_filter(scored, focus_mode, local_keywords)
         scored.sort(key=lambda item: item["score"], reverse=True)
-        local_headlines = self._build_local_headlines(scored, alerts, local_keywords, news_limit)
+        local_headlines = self._build_local_headlines(
+            scored,
+            alerts,
+            local_keywords,
+            news_limit,
+            home_center,
+            alert_radius_km,
+            focus_mode,
+        )
         germany_headlines = self._build_germany_headlines(scored, local_keywords, news_limit)
 
         germany_score = min(
@@ -236,11 +296,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         police_items = (
             police_raw_items if police_count_mode == POLICE_COUNT_MODE_ALL else police_relevant_items
         )
-        military_items = [item for item in scored if item["military_score"] >= 8][:10]
-        military_signal = min(
-            100,
-            len(military_items) * 7 + sum(item["military_score"] for item in military_items) // 2,
-        )
+        military_items_all = [item for item in scored if item["military_score"] >= 8]
+        military_items_germany = [item for item in military_items_all if item["region"] == "de"][:10]
+        military_items_world = [item for item in military_items_all if item["region"] == "world"][:10]
+        military_items = military_items_all[:10]
+        military_signal_germany = self._compute_military_signal(military_items_germany)
+        military_signal_world = self._compute_military_signal(military_items_world)
+        military_signal = max(military_signal_germany, military_signal_world)
         stability_index = max(
             0,
             min(
@@ -250,7 +312,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     int(germany_score * 0.55)
                     + int(global_score * 0.15)
                     + high_priority * 3
-                    + min(military_signal // 4, 20)
+                    + min(military_signal_germany // 5, 12)
+                    + min(military_signal_world // 6, 10)
                 ),
             ),
         )
@@ -259,7 +322,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         for item in scored[:20]:
             keyword_counter.update(item["keywords"])
 
-        map_markers = self._build_map_markers(all_official_alerts, home_center)
+        map_markers = self._build_map_markers(
+            alerts,
+            scored,
+            home_center,
+            local_keywords,
+            alert_radius_km,
+            focus_mode,
+        )
 
         return LageSnapshot(
             germany_score=germany_score,
@@ -268,6 +338,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             police_items=police_items,
             high_priority_items=high_priority,
             military_signal_score=military_signal,
+            military_signal_germany=military_signal_germany,
+            military_signal_world=military_signal_world,
             stability_index=stability_index,
             headlines=scored[:news_limit],
             local_headlines=local_headlines,
@@ -275,6 +347,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             alerts=alerts[: min(len(alerts), 15)],
             map_markers=map_markers,
             military_items=military_items,
+            military_items_germany=military_items_germany,
+            military_items_world=military_items_world,
             top_keywords=[
                 {"keyword": keyword, "count": count}
                 for keyword, count in keyword_counter.most_common(8)
@@ -304,6 +378,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             score_breakdown={
                 "alerts": len(alerts) * 6,
                 "military_signal": military_signal,
+                "military_signal_germany": military_signal_germany,
+                "military_signal_world": military_signal_world,
                 "high_priority_items": high_priority * 5,
                 "police_items": police_items * 2,
             },
@@ -318,6 +394,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             police_items=0,
             high_priority_items=0,
             military_signal_score=0,
+            military_signal_germany=0,
+            military_signal_world=0,
             stability_index=100,
             headlines=[],
             local_headlines=[],
@@ -325,6 +403,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             alerts=[],
             map_markers=[],
             military_items=[],
+            military_items_germany=[],
+            military_items_world=[],
             top_keywords=[],
             sources=[],
             source_status={},
@@ -355,9 +435,18 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             score_breakdown={
                 "alerts": 0,
                 "military_signal": 0,
+                "military_signal_germany": 0,
+                "military_signal_world": 0,
                 "high_priority_items": 0,
                 "police_items": 0,
             },
+        )
+
+    def _compute_military_signal(self, items: list[dict]) -> int:
+        """Return a capped military signal score where higher means more critical."""
+        return min(
+            100,
+            len(items) * 7 + sum(int(item.get("military_score") or 0) for item in items) // 2,
         )
 
     async def _safe_fetch_feed(self, url: str, source: str, limit: int) -> tuple[list[FeedItem], dict]:
@@ -823,25 +912,35 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     def _build_map_markers(
         self,
         alerts: list[dict],
+        scored_items: list[dict],
         home_center: tuple[float | None, float | None],
+        local_keywords: list[str],
+        radius_km: int,
+        focus_mode: str,
     ) -> list[dict]:
-        """Build nationwide daily map markers plus a home focus marker."""
+        """Build map markers from local alerts plus geolocated news items."""
         markers: list[dict] = []
-        todays_alerts = self._filter_alerts_for_today(alerts)
+        map_items = self._build_alert_map_items(alerts) + self._build_news_map_items(
+            scored_items,
+            home_center,
+            local_keywords,
+            radius_km,
+            focus_mode,
+        )
         clustered: dict[tuple[float, float], list[dict]] = {}
 
-        for alert in todays_alerts:
-            lat = alert.get("latitude")
-            lon = alert.get("longitude")
+        for item in map_items:
+            lat = item.get("latitude")
+            lon = item.get("longitude")
             if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
                 continue
             key = (round(float(lat) / 0.35) * 0.35, round(float(lon) / 0.5) * 0.5)
-            clustered.setdefault(key, []).append(alert)
+            clustered.setdefault(key, []).append(item)
 
         for (lat, lon), cluster_alerts in clustered.items():
             cluster_items = [
                 {
-                    "title": str(item.get("title") or "Warnung"),
+                    "title": str(item.get("title") or "Meldung"),
                     "source": str(item.get("source") or ""),
                     "severity": str(item.get("severity") or ""),
                     "link": str(item.get("link") or ""),
@@ -856,7 +955,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "kind": "cluster",
                     "title": top_titles[0],
                     "source": ", ".join(sources[:3]),
-                    "severity": f"{len(cluster_alerts)} Meldungen heute",
+                    "severity": f"{len(cluster_alerts)} Meldungen/News",
                     "latitude": round(lat, 5),
                     "longitude": round(lon, 5),
                     "count": len(cluster_alerts),
@@ -883,6 +982,100 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         markers.sort(key=lambda item: (item.get("kind") == "home", item.get("count", 0)), reverse=True)
         return markers
+
+    def _build_alert_map_items(self, alerts: list[dict]) -> list[dict]:
+        """Convert today's local alerts into map items."""
+        items: list[dict] = []
+        for alert in self._filter_alerts_for_today(alerts):
+            lat = alert.get("latitude")
+            lon = alert.get("longitude")
+            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+                continue
+            items.append(
+                {
+                    "title": str(alert.get("title") or "Warnung"),
+                    "source": str(alert.get("source") or ""),
+                    "severity": str(alert.get("severity") or ""),
+                    "link": str(alert.get("link") or ""),
+                    "latitude": float(lat),
+                    "longitude": float(lon),
+                }
+            )
+        return items
+
+    def _build_news_map_items(
+        self,
+        scored_items: list[dict],
+        home_center: tuple[float | None, float | None],
+        local_keywords: list[str],
+        radius_km: int,
+        focus_mode: str,
+    ) -> list[dict]:
+        """Geolocate high-value news items for the map."""
+        items: list[dict] = []
+        home_lat, home_lon = home_center
+        seen: set[str] = set()
+
+        for item in scored_items:
+            if item.get("source") in {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}:
+                continue
+            score = int(item.get("score") or 0)
+            if score < 8:
+                continue
+
+            lat, lon, severity = self._resolve_news_coordinates(item, local_keywords, home_center)
+            if lat is None or lon is None:
+                continue
+            if (
+                focus_mode == FOCUS_MODE_LOCAL
+                and home_lat is not None
+                and home_lon is not None
+                and self._haversine_km(home_lat, home_lon, lat, lon) > radius_km
+                and severity != "Lokale News am Home-Fokus"
+            ):
+                continue
+
+            key = str(item.get("link") or item.get("title") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(
+                {
+                    "title": str(item.get("title") or "News"),
+                    "source": str(item.get("source") or ""),
+                    "severity": severity,
+                    "link": str(item.get("link") or ""),
+                    "latitude": lat,
+                    "longitude": lon,
+                }
+            )
+            if len(items) >= 8:
+                break
+
+        return items
+
+    def _resolve_news_coordinates(
+        self,
+        item: dict,
+        local_keywords: list[str],
+        home_center: tuple[float | None, float | None],
+    ) -> tuple[float | None, float | None, str]:
+        """Resolve a best-effort coordinate for a news item."""
+        text = f"{item.get('title', '')} {item.get('summary', '')}"
+        normalized_text = self._normalize_text(text)
+        home_lat, home_lon = home_center
+
+        for keyword in local_keywords:
+            normalized_keyword = self._normalize_text(keyword)
+            if normalized_keyword and normalized_keyword in normalized_text:
+                if home_lat is not None and home_lon is not None:
+                    return float(home_lat), float(home_lon), "Lokale News am Home-Fokus"
+
+        for place, coords in NEWS_PLACE_COORDINATES.items():
+            if place in normalized_text:
+                return float(coords[0]), float(coords[1]), "News mit Ortsbezug"
+
+        return None, None, ""
 
     def _feed_fetch_limit(self, news_limit: int) -> int:
         """Fetch deeper into feeds so later scoring can still surface relevant articles."""
@@ -944,11 +1137,21 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         alerts: list[dict],
         local_keywords: list[str],
         limit: int,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+        focus_mode: str,
     ) -> list[dict]:
         """Build a strict local-only list from local keyword hits and local alerts."""
         items: list[dict] = []
         seen: set[str] = set()
-        for item in self._alerts_to_scored_items(alerts):
+        local_alerts = self._select_local_alerts_for_headlines(
+            alerts,
+            local_keywords,
+            home_center,
+            radius_km,
+            focus_mode,
+        )
+        for item in self._alerts_to_scored_items(local_alerts):
             key = str(item.get("link") or item.get("title") or "")
             if key and key not in seen:
                 seen.add(key)
@@ -962,6 +1165,38 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 items.append(item)
         items.sort(key=lambda item: item["score"], reverse=True)
         return items[:limit]
+
+    def _select_local_alerts_for_headlines(
+        self,
+        alerts: list[dict],
+        local_keywords: list[str],
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+        focus_mode: str,
+    ) -> list[dict]:
+        """Prefer locally relevant alerts for the local headline list."""
+        local_alerts: list[dict] = []
+        home_lat, home_lon = home_center
+        for alert in alerts:
+            title = str(alert.get("title") or "")
+            severity = str(alert.get("severity") or "")
+            haystack = f"{title} {severity}".lower()
+            if any(keyword.lower() in haystack for keyword in local_keywords):
+                local_alerts.append(alert)
+                continue
+
+            lat = alert.get("latitude")
+            lon = alert.get("longitude")
+            if (
+                home_lat is not None
+                and home_lon is not None
+                and isinstance(lat, (int, float))
+                and isinstance(lon, (int, float))
+                and self._haversine_km(home_lat, home_lon, float(lat), float(lon)) <= radius_km
+            ):
+                local_alerts.append(alert)
+
+        return local_alerts
 
     def _build_germany_headlines(
         self,

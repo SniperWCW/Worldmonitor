@@ -69,9 +69,27 @@ const CARD_STYLE = `
     line-height: 1;
     font-weight: 800;
   }
+  .score-value.state-good,
+  .metric-value.state-good {
+    color: #15803d;
+  }
+  .score-value.state-medium,
+  .metric-value.state-medium {
+    color: #b45309;
+  }
+  .score-value.state-bad,
+  .metric-value.state-bad {
+    color: #b91c1c;
+  }
   .score-label {
     color: var(--secondary-text-color);
     font-size: 0.9rem;
+  }
+  .score-state {
+    margin-top: 8px;
+    font-size: 0.84rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
   }
   .hero-side {
     display: grid;
@@ -95,6 +113,12 @@ const CARD_STYLE = `
     font-size: 1.4rem;
     font-weight: 700;
     line-height: 1.1;
+  }
+  .metric-hint {
+    margin-top: 6px;
+    color: var(--secondary-text-color);
+    font-size: 0.76rem;
+    line-height: 1.35;
   }
   .grid {
     display: grid;
@@ -610,6 +634,41 @@ function resolveAlertCount(rawState, alertItems) {
   return entityCount;
 }
 
+function getScoreState(value, positiveHigh = false) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return { className: "", label: "" };
+  }
+  if (positiveHigh) {
+    if (numeric >= 70) {
+      return { className: "state-good", label: "Gruen: hoch ist gut" };
+    }
+    if (numeric >= 40) {
+      return { className: "state-medium", label: "Gelb: mittel" };
+    }
+    return { className: "state-bad", label: "Rot: niedrig ist kritisch" };
+  }
+  if (numeric <= 35) {
+    return { className: "state-good", label: "Gruen: niedrig ist ruhig" };
+  }
+  if (numeric <= 70) {
+    return { className: "state-medium", label: "Gelb: erhoeht" };
+  }
+  return { className: "state-bad", label: "Rot: hoch ist kritisch" };
+}
+
+function renderMetric(title, value, options = {}) {
+  const { positiveHigh = false, hint = "" } = options;
+  const state = getScoreState(value, positiveHigh);
+  return `
+    <div class="metric">
+      <div class="metric-label">${title}</div>
+      <div class="metric-value ${state.className}">${value}</div>
+      <div class="metric-hint">${hint || state.label}</div>
+    </div>
+  `;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -636,7 +695,7 @@ function buildMapPoints(markers, homeCenter) {
       key: marker.key || `${marker.kind || "cluster"}:${lat}:${lon}`,
       latitude: lat,
       longitude: lon,
-      title: marker.title || "Warnung",
+      title: marker.title || "Meldung",
       source: marker.source || "",
       severity: marker.severity || "",
       count: Number(marker.count) || 1,
@@ -737,6 +796,8 @@ class LageMonitorCard extends HTMLElement {
     const keywords = (attrs.top_keywords || []).slice(0, 6);
     const markers = attrs.map_markers || [];
     const militaryItems = (attrs.military_items || []).slice(0, 10);
+    const militarySignalGermany = attrs.military_signal_germany ?? "-";
+    const militarySignalWorld = attrs.military_signal_world ?? "-";
     const stability = hass.states[config.stability_entity]?.state ?? "-";
     const military = hass.states[config.military_entity]?.state ?? "-";
     const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
@@ -744,8 +805,9 @@ class LageMonitorCard extends HTMLElement {
     const mapPoints = buildMapPoints(markers, homeCenter);
     const realMarkerCount = getRealMarkerCount(mapPoints);
     const mapStatus = realMarkerCount > 0
-      ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus heutigen deutschlandweiten Meldungen.`
-      : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder Ereignisse vor.";
+      ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus aktuellen Warnungen und News mit Ortsbezug.`
+      : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder News mit Ortsbezug vor.";
+    const germanyScoreState = getScoreState(stateObj.state, false);
 
     const markup = `
       <style>${CARD_STYLE}</style>
@@ -756,23 +818,16 @@ class LageMonitorCard extends HTMLElement {
               <div class="title">${config.title}</div>
               <div class="sub">Lageueberblick fuer Deutschland und relevante Ereignisse</div>
               <div class="score">
-                <div class="score-value">${stateObj.state}</div>
+                <div class="score-value ${germanyScoreState.className}">${stateObj.state}</div>
                 <div class="score-label">Deutschland Lage-Score</div>
               </div>
+              <div class="score-state">${germanyScoreState.label}</div>
             </div>
             <div class="hero-side">
-              <div class="metric">
-                <div class="metric-label">Aktive Warnungen</div>
-                <div class="metric-value">${activeAlerts}</div>
-              </div>
-              <div class="metric">
-                <div class="metric-label">Stabilitaet</div>
-                <div class="metric-value">${stability}</div>
-              </div>
-              <div class="metric">
-                <div class="metric-label">Militaersignal</div>
-                <div class="metric-value">${military}</div>
-              </div>
+              ${renderMetric("Aktive Warnungen", activeAlerts, { positiveHigh: false, hint: "Mehr Warnungen bedeuten meist hoehere Lagebelastung." })}
+              ${renderMetric("Stabilitaet", stability, { positiveHigh: true, hint: "Hier ist 100 gut und 0 kritisch." })}
+              ${renderMetric("Militaersignal Deutschland", militarySignalGermany, { positiveHigh: false, hint: "Hier ist 100 kritisch und 0 ruhig." })}
+              ${renderMetric("Militaersignal Welt", militarySignalWorld, { positiveHigh: false, hint: "Hier ist 100 kritisch und 0 ruhig." })}
             </div>
           </div>
           <div class="grid">
@@ -954,7 +1009,7 @@ class LageMonitorCard extends HTMLElement {
       : point.titles.map((title) => ({ title }));
     const label = point.kind === "home"
       ? "Home-Position"
-      : `${point.count} Meldung${point.count === 1 ? "" : "en"} an diesem Punkt`;
+      : `${point.count} Meldung${point.count === 1 ? "" : "en"} / News an diesem Punkt`;
     const itemMarkup = items.length
       ? items.slice(0, 5).map((item) => {
           const title = escapeHtml(item.title || "Warnung");
@@ -1055,7 +1110,7 @@ class LageMonitorCard extends HTMLElement {
           ? point.items
           : point.titles.map((title) => ({ title }));
         const popupItems = items.slice(0, 3).map((item) => {
-          const title = escapeHtml(item.title || "Warnung");
+          const title = escapeHtml(item.title || "Meldung");
           const link = safeHttpLink(item.link);
           return link
             ? `<br><a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">${title}</a>`
@@ -1069,7 +1124,7 @@ class LageMonitorCard extends HTMLElement {
           fillOpacity: 0.78,
           bubblingMouseEvents: false
         }).addTo(this._mapMarkersLayer).bindPopup(`
-          <strong>${point.count} Meldung${point.count === 1 ? "" : "en"} heute</strong><br>
+          <strong>${point.count} Meldung${point.count === 1 ? "" : "en"} / News</strong><br>
           ${escapeHtml(point.source || "")}
           ${popupItems}
         `);
