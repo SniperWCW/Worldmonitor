@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "lage_monitor"
 FRONTEND_BASE_URL = f"/{DOMAIN}_frontend"
 CARD_FILENAME = "lage-monitor-card.js"
-CARD_RESOURCE_VERSION = "0.1.30"
+CARD_RESOURCE_VERSION = "0.1.31"
 CARD_RESOURCE_URL = f"{FRONTEND_BASE_URL}/{CARD_FILENAME}?v={CARD_RESOURCE_VERSION}"
 
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -62,6 +62,8 @@ ATTR_HOME_COORDINATES = "home_coordinates"
 ATTR_ANALYSIS_SUMMARY = "analysis_summary"
 ATTR_RISK_DRIVERS = "risk_drivers"
 ATTR_SCORE_TREND = "score_trend"
+ATTR_GLOBAL_SCORE = "global_score"
+ATTR_LOCAL_SCORE = "local_score"
 
 WARNUNG_BUND_BASE_URL = "https://warnung.bund.de/api31"
 WARNUNG_BUND_ASSETS_BASE_URL = "https://warnung.bund.de/assets/json"

@@ -12,6 +12,7 @@ import html
 import logging
 import math
 import re
+from typing import Any
 import unicodedata
 from urllib.parse import quote
 
@@ -117,6 +118,7 @@ class LageSnapshot:
 
     germany_score: int
     global_score: int
+    local_score: int
     active_alerts: int
     police_items: int
     high_priority_items: int
@@ -138,7 +140,7 @@ class LageSnapshot:
     diagnostics: dict[str, str | int | bool]
     last_update: str
     score_breakdown: dict[str, int]
-    analysis_summary: dict[str, str]
+    analysis_summary: dict[str, Any]
     risk_drivers: list[dict]
     score_trend: dict[str, str | int]
 
@@ -288,6 +290,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             focus_mode,
         )
         germany_headlines = self._build_germany_headlines(scored, local_keywords, news_limit)
+        world_headlines = [item for item in scored if item.get("region") == "world"][:news_limit]
 
         official_alert_risk = min(35, sum(self._score_official_alert(alert) for alert in alerts))
         germany_police_risk = min(
@@ -325,6 +328,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             official_alert_risk + germany_police_risk + germany_news_risk + germany_high_priority_risk,
         )
         global_risk_score = min(100, sum(item["score"] for item in scored[:10]) // 2)
+        local_risk_score = min(100, sum(int(item.get("score") or 0) for item in local_headlines[:8]) // 2)
         high_priority = sum(1 for item in scored if item["score"] >= 12)
         police_raw_items = sum(1 for item in deduped if item.source == "presseportal_blaulicht")
         police_relevant_items = sum(
@@ -353,6 +357,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         stability_index = max(0, 100 - stability_deduction)
         germany_score = 100 - germany_risk_score
         global_score = 100 - global_risk_score
+        local_score = 100 - local_risk_score
         military_signal_germany = 100 - military_signal_germany_risk
         military_signal_world = 100 - military_signal_world_risk
         military_signal = 100 - military_signal_risk
@@ -361,6 +366,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "police_germany": germany_police_risk,
             "news_germany": germany_news_risk,
             "high_priority_germany": germany_high_priority_risk,
+            "local_total": local_risk_score,
             "military_signal": military_signal_risk,
             "military_signal_germany": military_signal_germany_risk,
             "military_signal_world": military_signal_world_risk,
@@ -377,11 +383,17 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         score_trend = self._build_score_trend(germany_score, stability_index)
         analysis_summary = self._build_analysis_summary(
             germany_score,
+            global_score,
+            local_score,
             stability_index,
             active_alerts=len(alerts),
             military_signal_germany=military_signal_germany,
+            military_signal_world=military_signal_world,
             risk_drivers=risk_drivers,
             germany_headlines=germany_headlines,
+            world_headlines=world_headlines,
+            local_headlines=local_headlines,
+            alert_radius_km=alert_radius_km,
         )
 
         keyword_counter: Counter[str] = Counter()
@@ -400,6 +412,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         return LageSnapshot(
             germany_score=germany_score,
             global_score=global_score,
+            local_score=local_score,
             active_alerts=len(alerts),
             police_items=police_items,
             high_priority_items=high_priority,
@@ -452,6 +465,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         return LageSnapshot(
             germany_score=100,
             global_score=100,
+            local_score=100,
             active_alerts=0,
             police_items=0,
             high_priority_items=0,
@@ -499,6 +513,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 "police_germany": 0,
                 "news_germany": 0,
                 "high_priority_germany": 0,
+                "local_total": 0,
                 "military_signal": 0,
                 "military_signal_germany": 0,
                 "military_signal_world": 0,
@@ -509,6 +524,24 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 "headline": "Keine aktuelle Lagebewertung verfügbar.",
                 "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
                 "outlook": "Nach dem nächsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
+                "germany": {
+                    "title": "Deutschland",
+                    "headline": "Keine aktuelle Lagebewertung verfÃ¼gbar.",
+                    "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
+                    "outlook": "Nach dem nÃ¤chsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
+                },
+                "world": {
+                    "title": "Welt",
+                    "headline": "Keine aktuelle Lagebewertung verfÃ¼gbar.",
+                    "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
+                    "outlook": "Nach dem nÃ¤chsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
+                },
+                "local": {
+                    "title": "Umkreis",
+                    "headline": "Keine aktuelle Lagebewertung verfÃ¼gbar.",
+                    "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
+                    "outlook": "Nach dem nÃ¤chsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
+                },
             },
             risk_drivers=[],
             score_trend={"delta": 0, "direction": "stable", "label": "Keine Vergleichsdaten"},
@@ -631,6 +664,146 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             outlook = "Entscheidend für die nächsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
 
         return {
+            "headline": headline,
+            "drivers": drivers,
+            "outlook": outlook,
+        }
+
+    def _build_analysis_summary(
+        self,
+        germany_score: int,
+        global_score: int,
+        local_score: int,
+        stability_index: int,
+        active_alerts: int,
+        military_signal_germany: int,
+        military_signal_world: int,
+        risk_drivers: list[dict],
+        germany_headlines: list[dict],
+        world_headlines: list[dict],
+        local_headlines: list[dict],
+        alert_radius_km: int,
+    ) -> dict[str, Any]:
+        """Build concise Lagebewertungen for Germany, world, and Home radius."""
+        top_driver = risk_drivers[0] if risk_drivers else None
+        headline = "Deutschland aktuell ruhig."
+        if germany_score <= 25:
+            headline = "Deutschland aktuell klar angespannt."
+        elif germany_score <= 45:
+            headline = "Deutschland aktuell spuerbar belastet."
+        elif germany_score <= 65:
+            headline = "Deutschland aktuell erhoeht aufmerksam, aber nicht akut kritisch."
+
+        if stability_index <= 35:
+            headline += " Die Stabilitaet ist deutlich unter Normalniveau."
+        elif stability_index <= 55:
+            headline += " Die Stabilitaet bleibt fragil."
+
+        if top_driver is None:
+            drivers = "Aktuell fehlen dominante Risikotreiber in den Eingangsdaten."
+        else:
+            drivers = f"Haupttreiber ist {top_driver['label'].lower()} ({top_driver['detail']})."
+            if germany_headlines:
+                top_title = str(germany_headlines[0].get("title") or "").strip()
+                if top_title:
+                    drivers += f" Praegendes Thema: {top_title}"
+
+        if active_alerts >= 10 and military_signal_germany >= 70:
+            outlook = "Amtliche Warnlagen sind vorhanden, waehrend das Militairsignal in Deutschland derzeit nicht zusaetzlich eskaliert."
+        elif military_signal_germany < 50:
+            outlook = "Neben der Nachrichtenlage sollte besonders beobachtet werden, ob sich das Deutschland-bezogene Militairsignal weiter verschaerft."
+        else:
+            outlook = "Entscheidend fuer die naechsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
+
+        germany_summary = {
+            "title": "Deutschland",
+            "headline": headline,
+            "drivers": drivers,
+            "outlook": outlook,
+        }
+        world_summary = self._build_world_analysis_summary(global_score, military_signal_world, world_headlines)
+        local_summary = self._build_local_analysis_summary(local_score, local_headlines, alert_radius_km, active_alerts)
+
+        return {
+            "headline": headline,
+            "drivers": drivers,
+            "outlook": outlook,
+            "germany": germany_summary,
+            "world": world_summary,
+            "local": local_summary,
+        }
+
+    def _build_world_analysis_summary(
+        self,
+        global_score: int,
+        military_signal_world: int,
+        world_headlines: list[dict],
+    ) -> dict[str, str]:
+        """Build a concise global Lagebewertung."""
+        headline = "Weltweit aktuell ruhig."
+        if global_score <= 25:
+            headline = "Weltweit aktuell klar angespannt."
+        elif global_score <= 45:
+            headline = "Weltweit aktuell spuerbar belastet."
+        elif global_score <= 65:
+            headline = "Weltweit aktuell erhoeht aufmerksam."
+
+        if military_signal_world <= 45:
+            headline += " Das globale Militairsignal bleibt deutlich belastet."
+        elif military_signal_world <= 65:
+            headline += " Das globale Militairsignal verdient Beobachtung."
+
+        top_world = world_headlines[0] if world_headlines else None
+        if top_world:
+            drivers = f"Praegend international: {top_world.get('title') or 'ohne Titel'}"
+        else:
+            drivers = "Aktuell fehlen dominante internationale Treiber in den Eingangsdaten."
+
+        if len(world_headlines) >= 4:
+            outlook = "Massgeblich ist, ob mehrere internationale Konflikt- oder Krisenthemen parallel hoch bleiben."
+        else:
+            outlook = "Entscheidend bleibt, ob einzelne Weltlagen in die Breite eskalieren oder wieder an Relevanz verlieren."
+
+        return {
+            "title": "Welt",
+            "headline": headline,
+            "drivers": drivers,
+            "outlook": outlook,
+        }
+
+    def _build_local_analysis_summary(
+        self,
+        local_score: int,
+        local_headlines: list[dict],
+        alert_radius_km: int,
+        active_alerts: int,
+    ) -> dict[str, str]:
+        """Build a concise local Lagebewertung around Home."""
+        headline = "Im Umkreis aktuell ruhig."
+        if local_score <= 25:
+            headline = "Im Umkreis aktuell klar angespannt."
+        elif local_score <= 45:
+            headline = "Im Umkreis aktuell spuerbar belastet."
+        elif local_score <= 65:
+            headline = "Im Umkreis aktuell erhoeht aufmerksam."
+
+        top_local = local_headlines[0] if local_headlines else None
+        if top_local:
+            source = str(top_local.get("source") or "").strip()
+            source_label = f" ({source})" if source else ""
+            drivers = f"Praegend im Umkreis von {alert_radius_km} km: {top_local.get('title') or 'ohne Titel'}{source_label}"
+        elif active_alerts:
+            drivers = f"Es liegen Warnungen vor, aktuell aber ohne dominante lokale Schwerpunktmeldung im Radius von {alert_radius_km} km."
+        else:
+            drivers = f"Im Radius von {alert_radius_km} km liegen aktuell keine dominanten Treiber vor."
+
+        if len(local_headlines) >= 3:
+            outlook = "Relevant ist, ob sich die lokalen Schwerpunktmeldungen verdichten oder wieder zerstreuen."
+        else:
+            outlook = "Entscheidend ist, ob neue lokale Warnungen oder Ortsbezug-Events in den Home-Umkreis hineinlaufen."
+
+        return {
+            "title": "Umkreis",
             "headline": headline,
             "drivers": drivers,
             "outlook": outlook,

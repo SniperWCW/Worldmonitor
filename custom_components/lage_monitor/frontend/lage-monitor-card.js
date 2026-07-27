@@ -77,6 +77,31 @@ const CARD_STYLE = `
     align-items: baseline;
     gap: 10px;
   }
+  .score-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .score-card {
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    min-width: 0;
+  }
+  .score-card-label {
+    color: var(--secondary-text-color);
+    font-size: 0.78rem;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .score-card-value {
+    font-size: 2rem;
+    line-height: 1;
+    font-weight: 800;
+  }
   .score-value {
     font-size: 3rem;
     line-height: 1;
@@ -330,6 +355,80 @@ const CARD_STYLE = `
     display: grid;
     gap: 10px;
     align-content: start;
+  }
+  .assessment-stack {
+    display: grid;
+    gap: 12px;
+  }
+  .assessment-panel {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 16px;
+    background: rgba(248, 250, 252, 0.82);
+    overflow: hidden;
+  }
+  .assessment-panel.collapsed .assessment-body {
+    display: none;
+  }
+  .assessment-head {
+    display: grid;
+    gap: 8px;
+    padding: 14px 16px;
+  }
+  .assessment-head-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .assessment-title-wrap {
+    min-width: 0;
+  }
+  .assessment-title {
+    font-size: 0.98rem;
+    font-weight: 700;
+  }
+  .assessment-score {
+    margin-top: 2px;
+    color: var(--secondary-text-color);
+    font-size: 0.84rem;
+  }
+  .assessment-headline {
+    font-size: 0.96rem;
+    font-weight: 700;
+    line-height: 1.45;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .assessment-body {
+    padding: 0 16px 16px;
+    display: grid;
+    gap: 10px;
+  }
+  .assessment-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .assessment-pill.state-good {
+    color: #15803d;
+    background: rgba(34, 197, 94, 0.14);
+  }
+  .assessment-pill.state-medium {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.16);
+  }
+  .assessment-pill.state-bad {
+    color: #b91c1c;
+    background: rgba(239, 68, 68, 0.14);
+  }
+  .assessment-drivers {
+    display: grid;
+    gap: 10px;
   }
   .trend-pill {
     display: inline-flex;
@@ -598,6 +697,7 @@ const CARD_STYLE = `
   @media (max-width: 640px) {
     .hero,
     .editor-grid,
+    .score-grid,
     .split-grid,
     .analysis-grid {
       grid-template-columns: 1fr;
@@ -953,11 +1053,56 @@ function renderCollapsiblePanel(panelKey, title, countLabel, content, open = fal
   `;
 }
 
+function getRegionSummary(summary, key) {
+  const region = summary?.[key];
+  return region && typeof region === "object" ? region : {};
+}
+
+function renderScoreCard(label, value) {
+  const state = getScoreState(value, true);
+  return `
+    <div class="score-card">
+      <div class="score-card-label">${escapeHtml(label)}</div>
+      <div class="score-card-value ${state.className}">${formatOutOfHundred(value)}</div>
+    </div>
+  `;
+}
+
+function renderAssessmentPanel(panelKey, regionLabel, score, summary, pillLabel, open = false) {
+  const state = getScoreState(score, true);
+  const headline = escapeHtml(summary?.headline || "Keine aktuelle Lagebewertung verfuegbar.");
+  const drivers = escapeHtml(summary?.drivers || "");
+  const outlook = escapeHtml(summary?.outlook || "");
+  return `
+    <div class="assessment-panel collapsible ${open ? "" : "collapsed"}" data-panel-key="${panelKey}">
+      <button class="panel-toggle" type="button" data-panel-key="${panelKey}" aria-expanded="${open ? "true" : "false"}">
+        <div class="assessment-head">
+          <div class="assessment-head-main">
+            <div class="assessment-title-wrap">
+              <div class="assessment-title">${escapeHtml(regionLabel)}</div>
+              <div class="assessment-score">${formatOutOfHundred(score)}</div>
+            </div>
+            <span class="assessment-pill ${state.className}">${escapeHtml(pillLabel)}</span>
+          </div>
+          <div class="assessment-headline">${headline}</div>
+        </div>
+      </button>
+      <div class="assessment-body">
+        ${drivers ? `<div class="analysis-text">${drivers}</div>` : ""}
+        ${outlook ? `<div class="analysis-text">${outlook}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
 class LageMonitorCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._panelState = {
+      germany_assessment: false,
+      world_assessment: false,
+      local_assessment: false,
       headlines: false,
       alerts: false,
       military: false
@@ -1008,9 +1153,15 @@ class LageMonitorCard extends HTMLElement {
     const militarySignalGermany = attrs.military_signal_germany ?? "-";
     const militarySignalWorld = attrs.military_signal_world ?? "-";
     const analysisSummary = attrs.analysis_summary || {};
-    const riskDrivers = (attrs.risk_drivers || []).slice(0, 4);
     const scoreTrend = attrs.score_trend || {};
     const stability = hass.states[config.stability_entity]?.state ?? "-";
+    const germanyScore = Number(stateObj.state);
+    const globalScore = attrs.global_score ?? "-";
+    const localScore = attrs.local_score ?? "-";
+    const germanySummary = getRegionSummary(analysisSummary, "germany");
+    const worldSummary = getRegionSummary(analysisSummary, "world");
+    const localSummary = getRegionSummary(analysisSummary, "local");
+    const localRadiusKm = attrs.diagnostics?.alert_radius_km;
     const lastUpdate = formatLastUpdate(attrs.last_update);
     const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
     const homeCenter = getHomeCenter(hass);
@@ -1019,8 +1170,9 @@ class LageMonitorCard extends HTMLElement {
     const mapStatus = realMarkerCount > 0
       ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus aktuellen Warnungen und News mit Ortsbezug.`
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder News mit Ortsbezug vor.";
-    const germanyScoreState = getScoreState(stateObj.state, true);
+    const germanyScoreState = getScoreState(germanyScore, true);
     const trendState = getTrendState(scoreTrend);
+    const localLabel = Number.isFinite(Number(localRadiusKm)) ? `Umkreis (${localRadiusKm} km)` : "Umkreis";
 
     const markup = `
       <style>${CARD_STYLE}</style>
@@ -1031,8 +1183,13 @@ class LageMonitorCard extends HTMLElement {
               <div class="title">${config.title}</div>
               <div class="sub">Lageüberblick für Deutschland und relevante Ereignisse. 100 = grün = gut, 0 = rot = kritisch.</div>
               <div class="score">
-                <div class="score-value ${germanyScoreState.className}">${formatOutOfHundred(stateObj.state)}</div>
+                <div class="score-value ${germanyScoreState.className}">${formatOutOfHundred(germanyScore)}</div>
                 <div class="score-label">Deutschland Lage-Score</div>
+              </div>
+              <div class="score-grid">
+                ${renderScoreCard("Deutschland", germanyScore)}
+                ${renderScoreCard("Welt", globalScore)}
+                ${renderScoreCard(localLabel, localScore)}
               </div>
               <div class="status-line">Zuletzt aktualisiert: ${lastUpdate}</div>
             </div>
@@ -1052,26 +1209,31 @@ class LageMonitorCard extends HTMLElement {
                 </div>
               </div>
               <div class="panel-body">
-                <div class="analysis-grid">
-                  <div class="analysis-copy">
-                    <div class="analysis-lead">${escapeHtml(analysisSummary.headline || "Keine aktuelle Lagebewertung verfügbar.")}</div>
-                    <div class="analysis-text">${escapeHtml(analysisSummary.drivers || "")}</div>
-                    <div class="analysis-text">${escapeHtml(analysisSummary.outlook || "")}</div>
-                  </div>
-                  <div class="analysis-side">
-                    <div class="split-section-title">Stärkste Treiber</div>
-                    <div class="driver-list">
-                      ${riskDrivers.length ? riskDrivers.map((driver) => `
-                        <div class="driver-item">
-                          <div class="driver-value">${escapeHtml(driver.value)}</div>
-                          <div class="driver-body">
-                            <div class="driver-title">${escapeHtml(driver.label || "Treiber")}</div>
-                            <div class="driver-detail">${escapeHtml(driver.detail || "")}</div>
-                          </div>
-                        </div>
-                      `).join("") : `<div class="empty">Noch keine aktuellen Treiber verfügbar</div>`}
-                    </div>
-                  </div>
+                <div class="assessment-stack">
+                  ${renderAssessmentPanel(
+                    "germany_assessment",
+                    "Deutschland",
+                    germanyScore,
+                    germanySummary,
+                    `${trendState.label}: ${scoreTrend.label || "Keine Vergleichsdaten"}`,
+                    this._panelState.germany_assessment
+                  )}
+                  ${renderAssessmentPanel(
+                    "world_assessment",
+                    "Welt",
+                    globalScore,
+                    worldSummary,
+                    "Global",
+                    this._panelState.world_assessment
+                  )}
+                  ${renderAssessmentPanel(
+                    "local_assessment",
+                    localLabel,
+                    localScore,
+                    localSummary,
+                    "Home",
+                    this._panelState.local_assessment
+                  )}
                 </div>
               </div>
             </div>
