@@ -1074,16 +1074,6 @@ function renderMetric(title, value, options = {}) {
   `;
 }
 
-function renderRiskComponentCard(label, value) {
-  const state = getScoreState(value, false);
-  return `
-    <div class="component-card">
-      <div class="component-label">${escapeHtml(label)}</div>
-      <div class="component-value ${state.className}">${formatOutOfHundred(value)}</div>
-    </div>
-  `;
-}
-
 function formatDelta(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -1268,38 +1258,6 @@ function renderAssessmentPanel(panelKey, regionLabel, score, summary, pillLabel,
   `;
 }
 
-function renderMethodologyPanel(panelKey, title, riskScore, components, open = false) {
-  const unrest = Number(components?.unrest ?? 0);
-  const conflict = Number(components?.conflict ?? 0);
-  const military = Number(components?.military ?? 0);
-  const information = Number(components?.information ?? 0);
-  return `
-    <div class="assessment-panel collapsible ${open ? "" : "collapsed"}" data-panel-key="${panelKey}">
-      <button class="panel-toggle" type="button" data-panel-key="${panelKey}" aria-expanded="${open ? "true" : "false"}">
-        <div class="assessment-head">
-          <div class="assessment-head-main">
-            <div class="assessment-title-wrap">
-              <div class="assessment-title">${escapeHtml(title)}</div>
-              <div class="assessment-score">Risiko-Proxy: ${formatOutOfHundred(riskScore)}</div>
-            </div>
-            <span class="assessment-pill ${getScoreState(riskScore, false).className}">Website-nahe Risikolesart</span>
-          </div>
-          <div class="assessment-headline">Die Website zaehlt Risiko nach oben. Diese Karte behaelt weiter 100 = gut, zeigt aber zusaetzlich einen vergleichbaren Risiko-Proxy mit Teilkomponenten.</div>
-        </div>
-      </button>
-      <div class="assessment-body">
-        <div class="component-grid">
-          ${renderRiskComponentCard("U: Unrest", unrest)}
-          ${renderRiskComponentCard("C: Conflict", conflict)}
-          ${renderRiskComponentCard("S: Military", military)}
-          ${renderRiskComponentCard("I: Info/Alerts", information)}
-        </div>
-        <div class="method-note">Die vier Werte sind eine lokale Proxy-Zerlegung aus Warnungen, Deutschland-News, priorisierten Ereignissen, Blaulichtdruck und Militaersignal. Sie bilden die Website-Methodik nicht 1:1 nach, machen den Score aber deutlich besser pruefbar.</div>
-      </div>
-    </div>
-  `;
-}
-
 class LageMonitorCard extends HTMLElement {
   constructor() {
     super();
@@ -1311,8 +1269,6 @@ class LageMonitorCard extends HTMLElement {
       headlines: false,
       alerts: false,
       military: false,
-      methodology: false,
-      world_orientation: false,
       trends: false,
       freshness: false
     };
@@ -1359,7 +1315,6 @@ class LageMonitorCard extends HTMLElement {
     const keywords = (attrs.top_keywords || []).slice(0, 6);
     const markers = attrs.map_markers || [];
     const militaryItems = (attrs.military_items || []).slice(0, 10);
-    const worldHeadlines = (attrs.world_headlines || []).slice(0, config.limit);
     const militarySignalGermany = attrs.military_signal_germany ?? "-";
     const militarySignalWorld = attrs.military_signal_world ?? "-";
     const analysisSummary = attrs.analysis_summary || {};
@@ -1369,14 +1324,7 @@ class LageMonitorCard extends HTMLElement {
     const stability = hass.states[config.stability_entity]?.state ?? "-";
     const germanyScore = toNumberOrNull(stateObj.state);
     const globalScore = attrs.global_score ?? "-";
-    const germanyRiskScore = attrs.germany_risk_score ?? "-";
-    const globalRiskScore = attrs.global_risk_score ?? "-";
     const localScore = attrs.local_score ?? "-";
-    const localRiskScore = attrs.local_risk_score ?? "-";
-    const riskComponents = attrs.risk_components || {};
-    const germanyComponents = riskComponents.germany || {};
-    const worldComponents = riskComponents.world || {};
-    const localComponents = riskComponents.local || {};
     const germanySummary = getRegionSummary(analysisSummary, "germany");
     const worldSummary = getRegionSummary(analysisSummary, "world");
     const localSummary = getRegionSummary(analysisSummary, "local");
@@ -1389,7 +1337,6 @@ class LageMonitorCard extends HTMLElement {
     const mapStatus = realMarkerCount > 0
       ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus aktuellen Warnungen und News mit Ortsbezug.`
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder News mit Ortsbezug vor.";
-    const germanyScoreState = getScoreState(germanyScore, true);
     const trendState = getTrendState(scoreTrend);
     const localLabel = Number.isFinite(Number(localRadiusKm)) ? `Umkreis (${localRadiusKm} km)` : "Umkreis";
 
@@ -1401,10 +1348,6 @@ class LageMonitorCard extends HTMLElement {
             <div class="hero-main">
               <div class="title">${config.title}</div>
               <div class="sub">Lageüberblick für Deutschland und relevante Ereignisse. 100 = grün = gut, 0 = rot = kritisch.</div>
-              <div class="score">
-                <div class="score-value ${germanyScoreState.className}">${formatOutOfHundred(germanyScore)}</div>
-                <div class="score-label">Deutschland Lage-Score</div>
-              </div>
               <div class="score-grid">
                 ${renderScoreCard("Deutschland", germanyScore)}
                 ${renderScoreCard("Welt", globalScore)}
@@ -1453,13 +1396,6 @@ class LageMonitorCard extends HTMLElement {
                     "Home",
                     this._panelState.local_assessment
                   )}
-                  ${renderMethodologyPanel(
-                    "methodology",
-                    "Score-Methodik und Website-Abgleich",
-                    germanyRiskScore,
-                    germanyComponents,
-                    this._panelState.methodology
-                  )}
                 </div>
               </div>
             </div>
@@ -1488,39 +1424,6 @@ class LageMonitorCard extends HTMLElement {
               `,
               this._panelState.freshness
             )}
-            <div class="panel">
-              <div class="panel-head">
-                <div class="panel-title">Risiko-Proxys</div>
-                <div class="panel-note">Website-Lesart</div>
-              </div>
-              <div class="panel-body">
-                <div class="score-grid">
-                  ${renderScoreCard("Deutschland Risiko", germanyRiskScore, { positiveHigh: false })}
-                  ${renderScoreCard("Welt Risiko", globalRiskScore, { positiveHigh: false })}
-                  ${renderScoreCard(`${localLabel} Risiko`, localRiskScore, { positiveHigh: false })}
-                </div>
-                <div class="component-grid" style="margin-top: 12px;">
-                  ${renderRiskComponentCard("DE U/C/S/I", Math.max(
-                    Number(germanyComponents.unrest || 0),
-                    Number(germanyComponents.conflict || 0),
-                    Number(germanyComponents.military || 0),
-                    Number(germanyComponents.information || 0)
-                  ))}
-                  ${renderRiskComponentCard("Welt U/C/S/I", Math.max(
-                    Number(worldComponents.unrest || 0),
-                    Number(worldComponents.conflict || 0),
-                    Number(worldComponents.military || 0),
-                    Number(worldComponents.information || 0)
-                  ))}
-                  ${renderRiskComponentCard("Lokal U/C/S/I", Math.max(
-                    Number(localComponents.unrest || 0),
-                    Number(localComponents.conflict || 0),
-                    Number(localComponents.military || 0),
-                    Number(localComponents.information || 0)
-                  ))}
-                </div>
-              </div>
-            </div>
             ${config.show_map ? `
               <div class="panel">
                 <div class="panel-head">
@@ -1573,26 +1476,6 @@ class LageMonitorCard extends HTMLElement {
                 </div>
               `,
               this._panelState.headlines
-            )}
-            ${renderCollapsiblePanel(
-              "world_orientation",
-              "Welt-Orientierung",
-              `${worldHeadlines.length} Eintraege`,
-              `
-                <div class="items">
-                  ${worldHeadlines.length ? worldHeadlines.map((item) => `
-                    <div class="item">
-                      <div class="item-top">
-                        <span class="badge">${item.score}</span>
-                        <span class="source">${item.source}</span>
-                      </div>
-                      <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
-                      <div class="summary">${item.summary || ""}</div>
-                    </div>
-                  `).join("") : `<div class="empty">Keine internationalen Orientierungstreffer verfuegbar</div>`}
-                </div>
-              `,
-              this._panelState.world_orientation
             )}
             ${renderCollapsiblePanel(
               "alerts",
