@@ -486,6 +486,113 @@ const CARD_STYLE = `
     line-height: 1.35;
     margin-top: 2px;
   }
+  .component-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+  }
+  .component-card {
+    padding: 12px;
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+  }
+  .component-label {
+    color: var(--secondary-text-color);
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .component-value {
+    margin-top: 6px;
+    font-size: 1.35rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .component-note {
+    margin-top: 6px;
+    color: var(--secondary-text-color);
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+  .method-note {
+    color: var(--secondary-text-color);
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+  .mini-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .mini-card {
+    padding: 12px;
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+  }
+  .mini-card-title {
+    font-size: 0.84rem;
+    font-weight: 700;
+  }
+  .mini-card-value {
+    margin-top: 6px;
+    font-size: 1.1rem;
+    font-weight: 800;
+  }
+  .mini-card-meta {
+    margin-top: 6px;
+    color: var(--secondary-text-color);
+    font-size: 0.8rem;
+    line-height: 1.35;
+  }
+  .freshness-list {
+    display: grid;
+    gap: 10px;
+  }
+  .freshness-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 10px;
+    align-items: start;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+  }
+  .freshness-title {
+    font-size: 0.86rem;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .freshness-meta {
+    color: var(--secondary-text-color);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    margin-top: 2px;
+  }
+  .freshness-badge {
+    padding: 6px 9px;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    white-space: nowrap;
+    background: rgba(148, 163, 184, 0.14);
+    color: #475569;
+  }
+  .freshness-badge.fresh {
+    color: #15803d;
+    background: rgba(34, 197, 94, 0.14);
+  }
+  .freshness-badge.delayed {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.16);
+  }
+  .freshness-badge.old,
+  .freshness-badge.error {
+    color: #b91c1c;
+    background: rgba(239, 68, 68, 0.14);
+  }
   .panel.collapsible {
     overflow: hidden;
   }
@@ -967,6 +1074,71 @@ function renderMetric(title, value, options = {}) {
   `;
 }
 
+function renderRiskComponentCard(label, value) {
+  const state = getScoreState(value, false);
+  return `
+    <div class="component-card">
+      <div class="component-label">${escapeHtml(label)}</div>
+      <div class="component-value ${state.className}">${formatOutOfHundred(value)}</div>
+    </div>
+  `;
+}
+
+function formatDelta(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "Keine Daten";
+  }
+  if (numeric > 0) {
+    return `+${numeric}`;
+  }
+  return `${numeric}`;
+}
+
+function renderTrendMiniCard(title, metric) {
+  return `
+    <div class="mini-card">
+      <div class="mini-card-title">${escapeHtml(title)}</div>
+      <div class="mini-card-value">${formatOutOfHundred(metric?.current ?? "-")}</div>
+      <div class="mini-card-meta">24h: ${escapeHtml(metric?.label_24h || formatDelta(metric?.delta_24h))}</div>
+      <div class="mini-card-meta">7d: ${escapeHtml(metric?.label_7d || formatDelta(metric?.delta_7d))}</div>
+    </div>
+  `;
+}
+
+function getFreshnessClass(label) {
+  const normalized = String(label || "").toLowerCase();
+  if (normalized === "frisch") {
+    return "fresh";
+  }
+  if (normalized === "verzoegert") {
+    return "delayed";
+  }
+  if (normalized === "alt") {
+    return "old";
+  }
+  if (normalized === "fehler") {
+    return "error";
+  }
+  return "";
+}
+
+function renderFreshnessItem(item) {
+  const age = Number.isFinite(Number(item?.age_minutes)) ? `${Number(item.age_minutes)} min` : "ohne Zeit";
+  const items = Number(item?.items || 0);
+  const error = String(item?.error || "").trim();
+  return `
+    <div class="freshness-item">
+      <div>
+        <div class="freshness-title">${escapeHtml(item?.source || "Quelle")}</div>
+        <div class="freshness-meta">${items} Treffer, letzte Aktivitaet: ${escapeHtml(age)}</div>
+        ${error ? `<div class="freshness-meta">${escapeHtml(error)}</div>` : ""}
+      </div>
+      <div class="freshness-badge ${getFreshnessClass(item?.label)}">${escapeHtml(item?.label || "Unbekannt")}</div>
+    </div>
+  `;
+}
+
 function getTrendState(trend) {
   const direction = String(trend?.direction || "stable");
   if (direction === "up") {
@@ -1058,8 +1230,9 @@ function getRegionSummary(summary, key) {
   return region && typeof region === "object" ? region : {};
 }
 
-function renderScoreCard(label, value) {
-  const state = getScoreState(value, true);
+function renderScoreCard(label, value, options = {}) {
+  const { positiveHigh = true } = options;
+  const state = getScoreState(value, positiveHigh);
   return `
     <div class="score-card">
       <div class="score-card-label">${escapeHtml(label)}</div>
@@ -1095,6 +1268,38 @@ function renderAssessmentPanel(panelKey, regionLabel, score, summary, pillLabel,
   `;
 }
 
+function renderMethodologyPanel(panelKey, title, riskScore, components, open = false) {
+  const unrest = Number(components?.unrest ?? 0);
+  const conflict = Number(components?.conflict ?? 0);
+  const military = Number(components?.military ?? 0);
+  const information = Number(components?.information ?? 0);
+  return `
+    <div class="assessment-panel collapsible ${open ? "" : "collapsed"}" data-panel-key="${panelKey}">
+      <button class="panel-toggle" type="button" data-panel-key="${panelKey}" aria-expanded="${open ? "true" : "false"}">
+        <div class="assessment-head">
+          <div class="assessment-head-main">
+            <div class="assessment-title-wrap">
+              <div class="assessment-title">${escapeHtml(title)}</div>
+              <div class="assessment-score">Risiko-Proxy: ${formatOutOfHundred(riskScore)}</div>
+            </div>
+            <span class="assessment-pill ${getScoreState(riskScore, false).className}">Website-nahe Risikolesart</span>
+          </div>
+          <div class="assessment-headline">Die Website zaehlt Risiko nach oben. Diese Karte behaelt weiter 100 = gut, zeigt aber zusaetzlich einen vergleichbaren Risiko-Proxy mit Teilkomponenten.</div>
+        </div>
+      </button>
+      <div class="assessment-body">
+        <div class="component-grid">
+          ${renderRiskComponentCard("U: Unrest", unrest)}
+          ${renderRiskComponentCard("C: Conflict", conflict)}
+          ${renderRiskComponentCard("S: Military", military)}
+          ${renderRiskComponentCard("I: Info/Alerts", information)}
+        </div>
+        <div class="method-note">Die vier Werte sind eine lokale Proxy-Zerlegung aus Warnungen, Deutschland-News, priorisierten Ereignissen, Blaulichtdruck und Militaersignal. Sie bilden die Website-Methodik nicht 1:1 nach, machen den Score aber deutlich besser pruefbar.</div>
+      </div>
+    </div>
+  `;
+}
+
 class LageMonitorCard extends HTMLElement {
   constructor() {
     super();
@@ -1105,7 +1310,11 @@ class LageMonitorCard extends HTMLElement {
       local_assessment: false,
       headlines: false,
       alerts: false,
-      military: false
+      military: false,
+      methodology: false,
+      world_orientation: false,
+      trends: false,
+      freshness: false
     };
     this._lastMarkup = "";
     this._lastMapSignature = "";
@@ -1150,14 +1359,24 @@ class LageMonitorCard extends HTMLElement {
     const keywords = (attrs.top_keywords || []).slice(0, 6);
     const markers = attrs.map_markers || [];
     const militaryItems = (attrs.military_items || []).slice(0, 10);
+    const worldHeadlines = (attrs.world_headlines || []).slice(0, config.limit);
     const militarySignalGermany = attrs.military_signal_germany ?? "-";
     const militarySignalWorld = attrs.military_signal_world ?? "-";
     const analysisSummary = attrs.analysis_summary || {};
+    const historySummary = attrs.history_summary || {};
+    const sourceFreshness = (attrs.source_freshness || []).slice(0, 8);
     const scoreTrend = attrs.score_trend || {};
     const stability = hass.states[config.stability_entity]?.state ?? "-";
     const germanyScore = Number(stateObj.state);
     const globalScore = attrs.global_score ?? "-";
+    const germanyRiskScore = attrs.germany_risk_score ?? "-";
+    const globalRiskScore = attrs.global_risk_score ?? "-";
     const localScore = attrs.local_score ?? "-";
+    const localRiskScore = attrs.local_risk_score ?? "-";
+    const riskComponents = attrs.risk_components || {};
+    const germanyComponents = riskComponents.germany || {};
+    const worldComponents = riskComponents.world || {};
+    const localComponents = riskComponents.local || {};
     const germanySummary = getRegionSummary(analysisSummary, "germany");
     const worldSummary = getRegionSummary(analysisSummary, "world");
     const localSummary = getRegionSummary(analysisSummary, "local");
@@ -1234,6 +1453,71 @@ class LageMonitorCard extends HTMLElement {
                     "Home",
                     this._panelState.local_assessment
                   )}
+                  ${renderMethodologyPanel(
+                    "methodology",
+                    "Score-Methodik und Website-Abgleich",
+                    germanyRiskScore,
+                    germanyComponents,
+                    this._panelState.methodology
+                  )}
+                </div>
+              </div>
+            </div>
+            ${renderCollapsiblePanel(
+              "trends",
+              "24h / 7d Verlauf",
+              "Fokuslage",
+              `
+                <div class="mini-grid">
+                  ${renderTrendMiniCard("Umkreis", historySummary.local || {})}
+                  ${renderTrendMiniCard("Deutschland", historySummary.germany || {})}
+                  ${renderTrendMiniCard("Welt", historySummary.world || {})}
+                  ${renderTrendMiniCard("Stabilitaet", historySummary.stability || {})}
+                </div>
+              `,
+              this._panelState.trends
+            )}
+            ${renderCollapsiblePanel(
+              "freshness",
+              "Datenfrische",
+              `${sourceFreshness.length} Quellen`,
+              `
+                <div class="freshness-list">
+                  ${sourceFreshness.length ? sourceFreshness.map((item) => renderFreshnessItem(item)).join("") : `<div class="empty">Keine Quelleninformationen verfuegbar</div>`}
+                </div>
+              `,
+              this._panelState.freshness
+            )}
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Risiko-Proxys</div>
+                <div class="panel-note">Website-Lesart</div>
+              </div>
+              <div class="panel-body">
+                <div class="score-grid">
+                  ${renderScoreCard("Deutschland Risiko", germanyRiskScore, { positiveHigh: false })}
+                  ${renderScoreCard("Welt Risiko", globalRiskScore, { positiveHigh: false })}
+                  ${renderScoreCard(`${localLabel} Risiko`, localRiskScore, { positiveHigh: false })}
+                </div>
+                <div class="component-grid" style="margin-top: 12px;">
+                  ${renderRiskComponentCard("DE U/C/S/I", Math.max(
+                    Number(germanyComponents.unrest || 0),
+                    Number(germanyComponents.conflict || 0),
+                    Number(germanyComponents.military || 0),
+                    Number(germanyComponents.information || 0)
+                  ))}
+                  ${renderRiskComponentCard("Welt U/C/S/I", Math.max(
+                    Number(worldComponents.unrest || 0),
+                    Number(worldComponents.conflict || 0),
+                    Number(worldComponents.military || 0),
+                    Number(worldComponents.information || 0)
+                  ))}
+                  ${renderRiskComponentCard("Lokal U/C/S/I", Math.max(
+                    Number(localComponents.unrest || 0),
+                    Number(localComponents.conflict || 0),
+                    Number(localComponents.military || 0),
+                    Number(localComponents.information || 0)
+                  ))}
                 </div>
               </div>
             </div>
@@ -1289,6 +1573,26 @@ class LageMonitorCard extends HTMLElement {
                 </div>
               `,
               this._panelState.headlines
+            )}
+            ${renderCollapsiblePanel(
+              "world_orientation",
+              "Welt-Orientierung",
+              `${worldHeadlines.length} Eintraege`,
+              `
+                <div class="items">
+                  ${worldHeadlines.length ? worldHeadlines.map((item) => `
+                    <div class="item">
+                      <div class="item-top">
+                        <span class="badge">${item.score}</span>
+                        <span class="source">${item.source}</span>
+                      </div>
+                      <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
+                      <div class="summary">${item.summary || ""}</div>
+                    </div>
+                  `).join("") : `<div class="empty">Keine internationalen Orientierungstreffer verfuegbar</div>`}
+                </div>
+              `,
+              this._panelState.world_orientation
             )}
             ${renderCollapsiblePanel(
               "alerts",

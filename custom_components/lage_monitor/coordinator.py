@@ -18,6 +18,7 @@ from urllib.parse import quote
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -126,9 +127,13 @@ class LageSnapshot:
     military_signal_germany: int
     military_signal_world: int
     stability_index: int
+    germany_risk_score: int
+    global_risk_score: int
+    local_risk_score: int
     headlines: list[dict]
     local_headlines: list[dict]
     germany_headlines: list[dict]
+    world_headlines: list[dict]
     alerts: list[dict]
     map_markers: list[dict]
     military_items: list[dict]
@@ -143,6 +148,9 @@ class LageSnapshot:
     analysis_summary: dict[str, Any]
     risk_drivers: list[dict]
     score_trend: dict[str, str | int]
+    risk_components: dict[str, dict[str, int]]
+    history_summary: dict[str, dict[str, int | str | None]]
+    source_freshness: list[dict[str, str | int | None | bool]]
 
 
 class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
@@ -153,6 +161,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         self.entry = entry
         self._warnung_kreise: dict[str, dict] | None = None
         self._warnung_gemeinden: dict[str, dict] | None = None
+        self._score_history: list[dict[str, Any]] = []
+        self._history_loaded = False
+        self._history_store: Store = Store(hass, 1, f"{DOMAIN}_{entry.entry_id}_history")
         interval = timedelta(
             seconds=entry.options.get(CONF_SCAN_INTERVAL, entry.data[CONF_SCAN_INTERVAL])
         )
@@ -165,6 +176,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
     async def _async_update_data(self) -> LageSnapshot:
         try:
+            await self._async_load_history()
             return await self._build_snapshot()
         except Exception as err:  # noqa: BLE001
             if self.data is not None:
@@ -172,6 +184,55 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 return self.data
             _LOGGER.warning("Could not update Lage Monitor, using empty snapshot: %s", err)
             return self._empty_snapshot()
+
+    async def _async_load_history(self) -> None:
+        """Load persisted score history once per coordinator lifetime."""
+        if self._history_loaded:
+            return
+        self._history_loaded = True
+        try:
+            stored = await self._history_store.async_load()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not load Lage Monitor history: %s", err)
+            return
+        entries = stored.get("entries", []) if isinstance(stored, dict) else []
+        loaded: list[dict[str, Any]] = []
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            ts = dt_util.parse_datetime(str(item.get("ts") or ""))
+            if ts is None:
+                continue
+            loaded.append(
+                {
+                    "ts": dt_util.as_local(ts),
+                    "germany_score": int(item.get("germany_score", 100)),
+                    "global_score": int(item.get("global_score", 100)),
+                    "local_score": int(item.get("local_score", 100)),
+                    "stability_index": int(item.get("stability_index", 100)),
+                }
+            )
+        cutoff = dt_util.now() - timedelta(days=7, hours=1)
+        self._score_history = [item for item in loaded if item["ts"] >= cutoff]
+
+    async def _async_save_history(self) -> None:
+        """Persist current history window for restart-stable trends."""
+        payload = {
+            "entries": [
+                {
+                    "ts": item["ts"].isoformat(),
+                    "germany_score": int(item["germany_score"]),
+                    "global_score": int(item["global_score"]),
+                    "local_score": int(item["local_score"]),
+                    "stability_index": int(item["stability_index"]),
+                }
+                for item in self._score_history
+            ]
+        }
+        try:
+            await self._history_store.async_save(payload)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not save Lage Monitor history: %s", err)
 
     async def _build_snapshot(self) -> LageSnapshot:
         headlines: list[FeedItem] = []
@@ -373,6 +434,35 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "high_priority_items": high_priority * 5,
             "police_items": police_items * 2,
         }
+        risk_components = {
+            "germany": self._build_risk_components(
+                scored,
+                "de",
+                official_alert_risk,
+                germany_police_risk,
+                germany_news_risk,
+                germany_high_priority_risk,
+                military_signal_germany_risk,
+            ),
+            "world": self._build_risk_components(
+                scored,
+                "world",
+                0,
+                0,
+                min(35, global_risk_score // 2),
+                min(35, sum(1 for item in world_headlines if int(item.get("score") or 0) >= 12) * 6),
+                military_signal_world_risk,
+            ),
+            "local": self._build_risk_components(
+                local_headlines,
+                "de",
+                min(30, official_alert_risk),
+                min(25, sum(1 for item in local_headlines if item.get("source") == "presseportal_blaulicht") * 5),
+                min(35, local_risk_score // 2),
+                min(35, sum(1 for item in local_headlines if int(item.get("score") or 0) >= 12) * 6),
+                military_signal_germany_risk,
+            ),
+        }
         risk_drivers = self._build_risk_drivers(
             score_breakdown,
             germany_headlines,
@@ -394,6 +484,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             world_headlines=world_headlines,
             local_headlines=local_headlines,
             alert_radius_km=alert_radius_km,
+        )
+        source_freshness = self._build_source_freshness(scored, alerts, source_status)
+        history_summary = self._build_history_summary(
+            germany_score,
+            global_score,
+            local_score,
+            stability_index,
         )
 
         keyword_counter: Counter[str] = Counter()
@@ -420,9 +517,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             military_signal_germany=military_signal_germany,
             military_signal_world=military_signal_world,
             stability_index=stability_index,
+            germany_risk_score=germany_risk_score,
+            global_risk_score=global_risk_score,
+            local_risk_score=local_risk_score,
             headlines=scored[:news_limit],
             local_headlines=local_headlines,
             germany_headlines=germany_headlines,
+            world_headlines=world_headlines,
             alerts=alerts[: min(len(alerts), 15)],
             map_markers=map_markers,
             military_items=military_items,
@@ -458,6 +559,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             analysis_summary=analysis_summary,
             risk_drivers=risk_drivers,
             score_trend=score_trend,
+            risk_components=risk_components,
+            history_summary=history_summary,
+            source_freshness=source_freshness,
         )
 
     def _empty_snapshot(self) -> LageSnapshot:
@@ -473,9 +577,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             military_signal_germany=100,
             military_signal_world=100,
             stability_index=100,
+            germany_risk_score=0,
+            global_risk_score=0,
+            local_risk_score=0,
             headlines=[],
             local_headlines=[],
             germany_headlines=[],
+            world_headlines=[],
             alerts=[],
             map_markers=[],
             military_items=[],
@@ -545,6 +653,18 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             },
             risk_drivers=[],
             score_trend={"delta": 0, "direction": "stable", "label": "Keine Vergleichsdaten"},
+            risk_components={
+                "germany": {"unrest": 0, "conflict": 0, "military": 0, "information": 0},
+                "world": {"unrest": 0, "conflict": 0, "military": 0, "information": 0},
+                "local": {"unrest": 0, "conflict": 0, "military": 0, "information": 0},
+            },
+            history_summary={
+                "germany": {"current": 100, "delta_24h": None, "delta_7d": None, "label_24h": "Keine Daten", "label_7d": "Keine Daten"},
+                "local": {"current": 100, "delta_24h": None, "delta_7d": None, "label_24h": "Keine Daten", "label_7d": "Keine Daten"},
+                "world": {"current": 100, "delta_24h": None, "delta_7d": None, "label_24h": "Keine Daten", "label_7d": "Keine Daten"},
+                "stability": {"current": 100, "delta_24h": None, "delta_7d": None, "label_24h": "Keine Daten", "label_7d": "Keine Daten"},
+            },
+            source_freshness=[],
         )
 
     def _build_score_trend(self, germany_score: int, stability_index: int) -> dict[str, str | int]:
@@ -571,6 +691,161 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "label": label,
             "stability_delta": stability_delta,
         }
+
+    def _build_risk_components(
+        self,
+        items: list[dict],
+        region: str,
+        alert_risk: int,
+        police_risk: int,
+        news_risk: int,
+        priority_risk: int,
+        military_risk: int,
+    ) -> dict[str, int]:
+        """Map current signals to a website-style U/C/S/I proxy breakdown."""
+        region_items = [item for item in items if item.get("region") == region]
+        unrest_hits = 0
+        conflict_hits = 0
+        for item in region_items[:20]:
+            text = self._normalize_text(
+                f"{item.get('title', '')} {item.get('summary', '')} {' '.join(item.get('keywords', []))}"
+            )
+            if any(
+                keyword in text
+                for keyword in ("unruhen", "ausschreit", "protest", "demonstr", "streik", "riot", "blockad")
+            ):
+                unrest_hits += 1
+            if any(
+                keyword in text
+                for keyword in ("anschlag", "terror", "explosion", "amok", "geisel", "angriff", "attack", "bomb", "krieg")
+            ):
+                conflict_hits += 1
+
+        return {
+            "unrest": min(100, int(police_risk) * 4 + unrest_hits * 8),
+            "conflict": min(100, int(priority_risk) * 5 + conflict_hits * 10),
+            "military": min(100, int(military_risk)),
+            "information": min(100, int(alert_risk) * 2 + int(news_risk) * 3),
+        }
+
+    def _build_history_summary(
+        self,
+        germany_score: int,
+        global_score: int,
+        local_score: int,
+        stability_index: int,
+    ) -> dict[str, dict[str, int | str | None]]:
+        """Build lightweight 24h and 7d trends from coordinator runtime history."""
+        now = dt_util.now()
+        self._score_history.append(
+            {
+                "ts": now,
+                "germany_score": int(germany_score),
+                "global_score": int(global_score),
+                "local_score": int(local_score),
+                "stability_index": int(stability_index),
+            }
+        )
+        cutoff = now - timedelta(days=7, hours=1)
+        self._score_history = [item for item in self._score_history if item["ts"] >= cutoff]
+        self.hass.async_create_task(self._async_save_history())
+        return {
+            "germany": self._history_for_metric("germany_score", int(germany_score), now),
+            "local": self._history_for_metric("local_score", int(local_score), now),
+            "world": self._history_for_metric("global_score", int(global_score), now),
+            "stability": self._history_for_metric("stability_index", int(stability_index), now),
+        }
+
+    def _history_for_metric(
+        self,
+        key: str,
+        current: int,
+        now,
+    ) -> dict[str, int | str | None]:
+        """Return current plus deltas to the closest 24h and 7d sample."""
+        return {
+            "current": current,
+            "delta_24h": self._delta_from_history(key, current, now - timedelta(hours=24)),
+            "delta_7d": self._delta_from_history(key, current, now - timedelta(days=7)),
+            "label_24h": self._delta_label(self._delta_from_history(key, current, now - timedelta(hours=24))),
+            "label_7d": self._delta_label(self._delta_from_history(key, current, now - timedelta(days=7))),
+        }
+
+    def _delta_from_history(self, key: str, current: int, target_time) -> int | None:
+        """Find nearest sample at or before target time and return delta from now."""
+        candidates = [item for item in self._score_history if item["ts"] <= target_time and key in item]
+        if not candidates:
+            return None
+        reference = max(candidates, key=lambda item: item["ts"])
+        return current - int(reference[key])
+
+    def _delta_label(self, delta: int | None) -> str:
+        """Human-readable summary for trend deltas."""
+        if delta is None:
+            return "Keine Daten"
+        if delta > 0:
+            return f"+{delta}"
+        if delta < 0:
+            return str(delta)
+        return "0"
+
+    def _build_source_freshness(
+        self,
+        scored_items: list[dict],
+        alerts: list[dict],
+        source_status: dict[str, dict],
+    ) -> list[dict[str, str | int | None | bool]]:
+        """Summarize source health and latest publication age for the dashboard."""
+        now = dt_util.now()
+        latest_by_source: dict[str, Any] = {}
+        for item in scored_items:
+            source = str(item.get("source") or "")
+            published = self._parse_feed_datetime(item.get("published"))
+            if not source or published is None:
+                continue
+            current = latest_by_source.get(source)
+            if current is None or published > current:
+                latest_by_source[source] = published
+
+        latest_warn = None
+        for alert in alerts:
+            sent = dt_util.parse_datetime(str(alert.get("sent") or ""))
+            if sent is None:
+                continue
+            sent_local = dt_util.as_local(sent)
+            if latest_warn is None or sent_local > latest_warn:
+                latest_warn = sent_local
+        if latest_warn is not None:
+            latest_by_source["warnung_bund"] = latest_warn
+
+        freshness: list[dict[str, str | int | None | bool]] = []
+        for source, status in sorted(source_status.items()):
+            latest_dt = latest_by_source.get(source)
+            age_minutes = None
+            if latest_dt is not None:
+                age_minutes = max(0, int((now - dt_util.as_local(latest_dt)).total_seconds() // 60))
+            label = "Fehler"
+            if status.get("ok") is True:
+                if age_minutes is None:
+                    label = "Keine Zeitdaten"
+                elif age_minutes <= 120:
+                    label = "Frisch"
+                elif age_minutes <= 720:
+                    label = "Verzoegert"
+                else:
+                    label = "Alt"
+            freshness.append(
+                {
+                    "source": source,
+                    "ok": bool(status.get("ok")),
+                    "items": int(status.get("items") or 0),
+                    "age_minutes": age_minutes,
+                    "label": label,
+                    "error": str(status.get("error") or ""),
+                }
+            )
+        freshness.sort(key=lambda item: (not bool(item["ok"]), (item["age_minutes"] or 10**9)))
+        return freshness[:12]
 
     def _build_risk_drivers(
         self,
@@ -937,7 +1212,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         if item.source == "tagesschau_ausland":
             region = "world"
             score += 2
-        if item.source.startswith("presseportal"):
+        if item.source.startswith("presseportal") or item.source.startswith("custom_press_"):
             region = "de"
             score += 3
         if any(token in haystack for token in ("deutschland", "berlin", "hamburg", "nrw", "bayern")):

@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "lage_monitor"
 FRONTEND_BASE_URL = f"/{DOMAIN}_frontend"
 CARD_FILENAME = "lage-monitor-card.js"
-CARD_RESOURCE_VERSION = "0.1.31"
+CARD_RESOURCE_VERSION = "0.1.32"
 CARD_RESOURCE_URL = f"{FRONTEND_BASE_URL}/{CARD_FILENAME}?v={CARD_RESOURCE_VERSION}"
 
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -46,6 +46,7 @@ ATTR_ALERTS = "alerts"
 ATTR_HEADLINES = "headlines"
 ATTR_LOCAL_HEADLINES = "local_headlines"
 ATTR_GERMANY_HEADLINES = "germany_headlines"
+ATTR_WORLD_HEADLINES = "world_headlines"
 ATTR_SOURCES = "sources"
 ATTR_LAST_UPDATE = "last_update"
 ATTR_SCORE_BREAKDOWN = "score_breakdown"
@@ -64,6 +65,12 @@ ATTR_RISK_DRIVERS = "risk_drivers"
 ATTR_SCORE_TREND = "score_trend"
 ATTR_GLOBAL_SCORE = "global_score"
 ATTR_LOCAL_SCORE = "local_score"
+ATTR_GERMANY_RISK_SCORE = "germany_risk_score"
+ATTR_GLOBAL_RISK_SCORE = "global_risk_score"
+ATTR_LOCAL_RISK_SCORE = "local_risk_score"
+ATTR_RISK_COMPONENTS = "risk_components"
+ATTR_HISTORY_SUMMARY = "history_summary"
+ATTR_SOURCE_FRESHNESS = "source_freshness"
 
 WARNUNG_BUND_BASE_URL = "https://warnung.bund.de/api31"
 WARNUNG_BUND_ASSETS_BASE_URL = "https://warnung.bund.de/assets/json"
@@ -101,6 +108,12 @@ KEYWORD_WEIGHTS: dict[str, int] = {
     "ausschreitungen": 8,
     "brandanschlag": 8,
     "angriff": 7,
+    "einbruch": 6,
+    "eingebrochen": 6,
+    "einbrecher": 6,
+    "wohnungseinbruch": 8,
+    "zeugen gesucht": 3,
+    "diebstahl": 4,
     "gewalt": 7,
     "verletzte": 6,
     "tote": 9,
