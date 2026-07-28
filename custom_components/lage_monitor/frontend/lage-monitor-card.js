@@ -1367,7 +1367,7 @@ class LageMonitorCard extends HTMLElement {
     const sourceFreshness = (attrs.source_freshness || []).slice(0, 8);
     const scoreTrend = attrs.score_trend || {};
     const stability = hass.states[config.stability_entity]?.state ?? "-";
-    const germanyScore = Number(stateObj.state);
+    const germanyScore = toNumberOrNull(stateObj.state);
     const globalScore = attrs.global_score ?? "-";
     const germanyRiskScore = attrs.germany_risk_score ?? "-";
     const globalRiskScore = attrs.global_risk_score ?? "-";
