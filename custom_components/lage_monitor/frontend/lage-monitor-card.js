@@ -72,6 +72,16 @@ const CARD_STYLE = `
     font-size: 0.78rem;
     line-height: 1.4;
   }
+  .hero-assessment {
+    display: grid;
+    gap: 6px;
+    margin-top: 14px;
+  }
+  .hero-assessment-meta {
+    color: var(--secondary-text-color);
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
   .score {
     display: flex;
     align-items: baseline;
@@ -1069,6 +1079,35 @@ function getAssessmentStatus(score) {
   return { className: "state-bad", label: "Belastet" };
 }
 
+function getAggregateScore(values) {
+  const numericValues = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (!numericValues.length) {
+    return null;
+  }
+  return Math.round(numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length);
+}
+
+function getMetricDeltaLabel(metric) {
+  if (!metric || typeof metric !== "object") {
+    return "Trend 24h: Keine Daten | 7d: Keine Daten";
+  }
+  const label24h = String(metric.label_24h || "Keine Daten");
+  const label7d = String(metric.label_7d || "Keine Daten");
+  return `Trend 24h: ${label24h} | 7d: ${label7d}`;
+}
+
+function renderHeroAssessment(score, trendLabel) {
+  const state = getAssessmentStatus(score);
+  return `
+    <div class="hero-assessment">
+      <span class="assessment-pill ${state.className}">${state.label}: ${formatOutOfHundred(score)}</span>
+      <div class="hero-assessment-meta">${escapeHtml(trendLabel || "Trend: Keine Daten")}</div>
+    </div>
+  `;
+}
+
 function formatOutOfHundred(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -1359,6 +1398,9 @@ class LageMonitorCard extends HTMLElement {
     const germanySummary = getRegionSummary(analysisSummary, "germany");
     const worldSummary = getRegionSummary(analysisSummary, "world");
     const localSummary = getRegionSummary(analysisSummary, "local");
+    const germanyHistory = historySummary.germany || {};
+    const worldHistory = historySummary.world || {};
+    const localHistory = historySummary.local || {};
     const localRadiusKm = attrs.diagnostics?.alert_radius_km;
     const lastUpdate = formatLastUpdate(attrs.last_update);
     const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
@@ -1370,6 +1412,8 @@ class LageMonitorCard extends HTMLElement {
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder News mit Ortsbezug vor.";
     const trendState = getTrendState(scoreTrend);
     const localLabel = Number.isFinite(Number(localRadiusKm)) ? `Umkreis (${localRadiusKm} km)` : "Umkreis";
+    const aggregateScore = getAggregateScore([germanyScore, globalScore, localScore]);
+    const overallTrendLabel = `Deutschland seit letztem Update: ${scoreTrend.label || "Keine Vergleichsdaten"}`;
 
     const markup = `
       <style>${CARD_STYLE}</style>
@@ -1384,6 +1428,7 @@ class LageMonitorCard extends HTMLElement {
                 ${renderScoreCard("Welt", globalScore)}
                 ${renderScoreCard(localLabel, localScore)}
               </div>
+              ${renderHeroAssessment(aggregateScore, overallTrendLabel)}
               <div class="status-line">Zuletzt aktualisiert: ${lastUpdate}</div>
             </div>
             <div class="hero-side">
@@ -1398,7 +1443,7 @@ class LageMonitorCard extends HTMLElement {
               <div class="panel-head">
                 <div class="panel-title">KI Lagebewertung</div>
                 <div class="panel-note">
-                  <span class="trend-pill ${trendState.className}">${trendState.label}: ${escapeHtml(scoreTrend.label || "Keine Vergleichsdaten")}</span>
+                  <span class="trend-pill ${trendState.className}">Deutschland-Trend: ${escapeHtml(scoreTrend.label || "Keine Vergleichsdaten")}</span>
                 </div>
               </div>
               <div class="panel-body">
@@ -1408,7 +1453,7 @@ class LageMonitorCard extends HTMLElement {
                     "Deutschland",
                     germanyScore,
                     germanySummary,
-                    `Trend: ${trendState.label}${scoreTrend.label ? ` - ${scoreTrend.label}` : ""}`,
+                    getMetricDeltaLabel(germanyHistory),
                     this._panelState.germany_assessment
                   )}
                   ${renderAssessmentPanel(
@@ -1416,7 +1461,7 @@ class LageMonitorCard extends HTMLElement {
                     "Welt",
                     globalScore,
                     worldSummary,
-                    "Internationale Lage",
+                    getMetricDeltaLabel(worldHistory),
                     this._panelState.world_assessment
                   )}
                   ${renderAssessmentPanel(
@@ -1424,7 +1469,7 @@ class LageMonitorCard extends HTMLElement {
                     localLabel,
                     localScore,
                     localSummary,
-                    "Lokaler Fokus",
+                    getMetricDeltaLabel(localHistory),
                     this._panelState.local_assessment
                   )}
                 </div>
