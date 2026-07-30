@@ -347,9 +347,9 @@ const CARD_STYLE = `
     line-height: 1.45;
   }
   .analysis-text {
-    color: var(--secondary-text-color);
-    font-size: 0.9rem;
-    line-height: 1.5;
+    color: #475569;
+    font-size: 0.88rem;
+    line-height: 1.48;
   }
   .analysis-side {
     display: grid;
@@ -361,70 +361,85 @@ const CARD_STYLE = `
     gap: 12px;
   }
   .assessment-panel {
-    border: 1px solid rgba(148, 163, 184, 0.18);
+    border: 1px solid rgba(148, 163, 184, 0.16);
     border-radius: 16px;
-    background: rgba(248, 250, 252, 0.82);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.9));
     overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
   }
   .assessment-panel.collapsed .assessment-body {
     display: none;
   }
   .assessment-head {
     display: grid;
-    gap: 8px;
-    padding: 14px 16px;
+    gap: 10px;
+    padding: 16px 16px 14px;
   }
   .assessment-head-main {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 10px;
+    gap: 12px;
   }
   .assessment-title-wrap {
     min-width: 0;
+    display: grid;
+    gap: 4px;
   }
   .assessment-title {
-    font-size: 0.98rem;
-    font-weight: 700;
+    font-size: 1.08rem;
+    font-weight: 800;
   }
   .assessment-score {
-    margin-top: 2px;
     color: var(--secondary-text-color);
     font-size: 0.84rem;
+    line-height: 1.3;
+  }
+  .assessment-meta {
+    color: #64748b;
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
   .assessment-headline {
-    font-size: 0.96rem;
+    color: var(--primary-text-color);
+    font-size: 0.98rem;
     font-weight: 700;
-    line-height: 1.45;
+    line-height: 1.4;
     min-width: 0;
     overflow-wrap: anywhere;
   }
   .assessment-body {
     padding: 0 16px 16px;
     display: grid;
-    gap: 10px;
+    gap: 8px;
   }
   .assessment-pill {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 8px 10px;
+    padding: 7px 11px;
     border-radius: 999px;
-    font-size: 0.78rem;
+    border: 1px solid transparent;
+    font-size: 0.76rem;
     font-weight: 700;
     white-space: nowrap;
   }
   .assessment-pill.state-good {
-    color: #15803d;
-    background: rgba(34, 197, 94, 0.14);
+    color: #166534;
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.18);
   }
   .assessment-pill.state-medium {
-    color: #b45309;
-    background: rgba(245, 158, 11, 0.16);
+    color: #9a3412;
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.18);
   }
   .assessment-pill.state-bad {
     color: #b91c1c;
-    background: rgba(239, 68, 68, 0.14);
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.18);
   }
   .assessment-drivers {
     display: grid;
@@ -1040,6 +1055,20 @@ function getScoreState(value, positiveHigh = false) {
   return { className: "state-bad", label: "Rot: hoch ist kritisch" };
 }
 
+function getAssessmentStatus(score) {
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric)) {
+    return { className: "", label: "Keine Einordnung" };
+  }
+  if (numeric >= 70) {
+    return { className: "state-good", label: "Ruhig" };
+  }
+  if (numeric >= 40) {
+    return { className: "state-medium", label: "Aufmerksam" };
+  }
+  return { className: "state-bad", label: "Belastet" };
+}
+
 function formatOutOfHundred(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -1231,11 +1260,12 @@ function renderScoreCard(label, value, options = {}) {
   `;
 }
 
-function renderAssessmentPanel(panelKey, regionLabel, score, summary, pillLabel, open = false) {
-  const state = getScoreState(score, true);
+function renderAssessmentPanel(panelKey, regionLabel, score, summary, metaLabel, open = false) {
+  const state = getAssessmentStatus(score);
   const headline = escapeHtml(summary?.headline || "Keine aktuelle Lagebewertung verfuegbar.");
   const drivers = escapeHtml(summary?.drivers || "");
   const outlook = escapeHtml(summary?.outlook || "");
+  const meta = escapeHtml(metaLabel || "KI-Einschaetzung");
   return `
     <div class="assessment-panel collapsible ${open ? "" : "collapsed"}" data-panel-key="${panelKey}">
       <button class="panel-toggle" type="button" data-panel-key="${panelKey}" aria-expanded="${open ? "true" : "false"}">
@@ -1244,8 +1274,9 @@ function renderAssessmentPanel(panelKey, regionLabel, score, summary, pillLabel,
             <div class="assessment-title-wrap">
               <div class="assessment-title">${escapeHtml(regionLabel)}</div>
               <div class="assessment-score">${formatOutOfHundred(score)}</div>
+              <div class="assessment-meta">${meta}</div>
             </div>
-            <span class="assessment-pill ${state.className}">${escapeHtml(pillLabel)}</span>
+            <span class="assessment-pill ${state.className}">${state.label}</span>
           </div>
           <div class="assessment-headline">${headline}</div>
         </div>
@@ -1377,7 +1408,7 @@ class LageMonitorCard extends HTMLElement {
                     "Deutschland",
                     germanyScore,
                     germanySummary,
-                    `${trendState.label}: ${scoreTrend.label || "Keine Vergleichsdaten"}`,
+                    `Trend: ${trendState.label}${scoreTrend.label ? ` - ${scoreTrend.label}` : ""}`,
                     this._panelState.germany_assessment
                   )}
                   ${renderAssessmentPanel(
@@ -1385,7 +1416,7 @@ class LageMonitorCard extends HTMLElement {
                     "Welt",
                     globalScore,
                     worldSummary,
-                    "Global",
+                    "Internationale Lage",
                     this._panelState.world_assessment
                   )}
                   ${renderAssessmentPanel(
@@ -1393,7 +1424,7 @@ class LageMonitorCard extends HTMLElement {
                     localLabel,
                     localScore,
                     localSummary,
-                    "Home",
+                    "Lokaler Fokus",
                     this._panelState.local_assessment
                   )}
                 </div>
