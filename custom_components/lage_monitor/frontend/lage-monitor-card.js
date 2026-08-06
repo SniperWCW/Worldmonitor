@@ -1501,20 +1501,6 @@ class LageMonitorCard extends HTMLElement {
               </div>
             </div>
             ${renderCollapsiblePanel(
-              "trends",
-              "24h / 7d Verlauf",
-              "Fokuslage",
-              `
-                <div class="mini-grid">
-                  ${renderTrendMiniCard("Umkreis", historySummary.local || {})}
-                  ${renderTrendMiniCard("Deutschland", historySummary.germany || {})}
-                  ${renderTrendMiniCard("Welt", historySummary.world || {})}
-                  ${renderTrendMiniCard("Stabilitaet", historySummary.stability || {})}
-                </div>
-              `,
-              this._panelState.trends
-            )}
-            ${renderCollapsiblePanel(
               "freshness",
               "Datenfrische",
               `${sourceFreshness.length} Quellen`,
