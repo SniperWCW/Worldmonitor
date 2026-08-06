@@ -42,9 +42,7 @@ const CARD_STYLE = `
       var(--ha-card-background, var(--card-background-color, #fff));
   }
   .hero {
-    display: grid;
-    grid-template-columns: 1.15fr 0.85fr;
-    gap: 14px;
+    display: block;
     margin-bottom: 16px;
     min-width: 0;
   }
@@ -93,6 +91,12 @@ const CARD_STYLE = `
     gap: 12px;
     margin-top: 8px;
   }
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
   .score-card {
     padding: 14px 16px;
     border-radius: 16px;
@@ -133,17 +137,13 @@ const CARD_STYLE = `
     color: var(--secondary-text-color);
     font-size: 0.9rem;
   }
-  .hero-side {
-    display: grid;
-    gap: 12px;
-    min-width: 0;
-  }
   .metric {
     padding: 14px;
-    border-radius: 18px;
+    border-radius: 16px;
     background: rgba(255, 255, 255, 0.66);
     border: 1px solid rgba(148, 163, 184, 0.18);
     backdrop-filter: blur(6px);
+    min-width: 0;
   }
   .metric-label {
     color: var(--secondary-text-color);
@@ -151,6 +151,7 @@ const CARD_STYLE = `
     margin-bottom: 6px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
+    line-height: 1.2;
   }
   .metric-value {
     font-size: 1.4rem;
@@ -829,7 +830,6 @@ const CARD_STYLE = `
   @media (max-width: 640px) {
     .hero,
     .editor-grid,
-    .score-grid,
     .split-grid,
     .analysis-grid {
       grid-template-columns: 1fr;
@@ -858,13 +858,25 @@ const CARD_STYLE = `
     .score-value {
       font-size: 2.2rem;
     }
+    .score-card,
+    .metric {
+      padding: 12px;
+    }
+    .score-card-label,
+    .metric-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.05em;
+    }
+    .score-card-value {
+      font-size: 1.55rem;
+    }
     .score {
       flex-direction: column;
       align-items: flex-start;
       gap: 6px;
     }
     .metric-value {
-      font-size: 1.25rem;
+      font-size: 1.05rem;
     }
     .link {
       font-size: 0.98rem;
@@ -884,10 +896,13 @@ const CARD_STYLE = `
       padding: 10px;
     }
     .hero-main,
-    .metric,
     .map-selection,
     .editor-section {
       padding: 12px;
+    }
+    .score-grid,
+    .metric-grid {
+      gap: 8px;
     }
     .panel {
       border-radius: 16px;
@@ -902,6 +917,16 @@ const CARD_STYLE = `
     .badge {
       min-width: 1.7rem;
       padding: 2px 6px;
+    }
+    .score-card,
+    .metric {
+      padding: 10px;
+    }
+    .score-card-value {
+      font-size: 1.35rem;
+    }
+    .metric-value {
+      font-size: 0.95rem;
     }
   }
 `;
@@ -1411,7 +1436,7 @@ class LageMonitorCard extends HTMLElement {
       ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus aktuellen Warnungen und News mit Ortsbezug.`
       : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder News mit Ortsbezug vor.";
     const trendState = getTrendState(scoreTrend);
-    const localLabel = Number.isFinite(Number(localRadiusKm)) ? `Umkreis (${localRadiusKm} km)` : "Umkreis";
+    const localLabel = Number.isFinite(Number(localRadiusKm)) ? `Umkreis ${localRadiusKm} km` : "Umkreis";
     const aggregateScore = getAggregateScore([germanyScore, globalScore, localScore]);
     const overallTrendLabel = `Deutschland seit letztem Update: ${scoreTrend.label || "Keine Vergleichsdaten"}`;
 
@@ -1428,14 +1453,14 @@ class LageMonitorCard extends HTMLElement {
                 ${renderScoreCard("Welt", globalScore)}
                 ${renderScoreCard(localLabel, localScore)}
               </div>
+              <div class="metric-grid">
+                ${renderMetric("Warnungen", activeAlerts, { positiveHigh: false })}
+                ${renderMetric("Stabilität", stability, { positiveHigh: true, showOutOfHundred: true })}
+                ${renderMetric("Militär DE", militarySignalGermany, { positiveHigh: true, showOutOfHundred: true })}
+                ${renderMetric("Militär Welt", militarySignalWorld, { positiveHigh: true, showOutOfHundred: true })}
+              </div>
               ${renderHeroAssessment(aggregateScore, overallTrendLabel)}
               <div class="status-line">Zuletzt aktualisiert: ${lastUpdate}</div>
-            </div>
-            <div class="hero-side">
-              ${renderMetric("Aktive Warnungen", activeAlerts, { positiveHigh: false })}
-              ${renderMetric("Stabilität", stability, { positiveHigh: true, showOutOfHundred: true })}
-              ${renderMetric("Militärsignal Deutschland", militarySignalGermany, { positiveHigh: true, showOutOfHundred: true })}
-              ${renderMetric("Militärsignal Welt", militarySignalWorld, { positiveHigh: true, showOutOfHundred: true })}
             </div>
           </div>
           <div class="grid">

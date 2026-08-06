@@ -49,13 +49,16 @@ from .const import (
     DEFAULT_WARN_MOWAS,
     DEFAULT_WARN_POLICE,
     DOMAIN,
+    EONET_EVENTS_API_URL,
     FOCUS_MODE_LOCAL,
+    GERMANY_BBOX,
     GERMAN_NEWS_FEEDS,
     KEYWORD_WEIGHTS,
     MILITARY_KEYWORDS,
     NATIONAL_PRIORITY_KEYWORDS,
     POLICE_COUNT_MODE_ALL,
     PRESSEPORTAL_FEEDS,
+    USGS_EARTHQUAKE_FEED_URL,
     WARNUNG_BUND_ASSETS_BASE_URL,
     WARNUNG_BUND_BASE_URL,
 )
@@ -335,9 +338,16 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 headlines.extend(items)
                 source_status[source] = status
 
+        public_event_items, public_event_status = await self._safe_fetch_public_event_items(
+            home_center,
+            alert_radius_km,
+        )
+        source_status.update(public_event_status)
+
         deduped = self._dedupe_items(headlines)
         deduped = self._filter_recent_feed_items(deduped)
         scored = [self._score_item(item) for item in deduped]
+        scored.extend(public_event_items)
         if focus_mode == FOCUS_MODE_LOCAL:
             scored.extend(self._alerts_to_scored_items(alerts))
         scored = self._apply_focus_filter(scored, focus_mode, local_keywords)
@@ -771,6 +781,155 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "label_24h": self._delta_label(self._delta_from_history(key, current, now - timedelta(hours=24))),
             "label_7d": self._delta_label(self._delta_from_history(key, current, now - timedelta(days=7))),
         }
+
+    async def _safe_fetch_public_event_items(
+        self,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> tuple[list[dict], dict[str, dict]]:
+        """Fetch keyless structured event sources for Germany and the local radius."""
+        results = await asyncio.gather(
+            self._safe_fetch_usgs_items(home_center, radius_km),
+            self._safe_fetch_eonet_items(home_center, radius_km),
+            return_exceptions=True,
+        )
+        items: list[dict] = []
+        status: dict[str, dict] = {}
+        for source_name, result in zip(("usgs", "eonet"), results, strict=False):
+            if isinstance(result, Exception):
+                status[source_name] = {"ok": False, "items": 0, "error": str(result)}
+                continue
+            source_items, source_status = result
+            items.extend(source_items)
+            status[source_name] = source_status
+        items.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+        return items, status
+
+    async def _safe_fetch_usgs_items(
+        self,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> tuple[list[dict], dict]:
+        """Fetch recent USGS earthquakes and normalize relevant hits."""
+        try:
+            data = await fetch_json(self.hass, USGS_EARTHQUAKE_FEED_URL)
+            items = self._normalize_usgs_items(data, home_center, radius_km)
+            return items, {"ok": True, "items": len(items), "error": ""}
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("USGS fetch failed: %s", err)
+            return [], {"ok": False, "items": 0, "error": str(err)}
+
+    async def _safe_fetch_eonet_items(
+        self,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> tuple[list[dict], dict]:
+        """Fetch recent natural events for Germany and the local radius."""
+        try:
+            items = await self._fetch_eonet_items(home_center, radius_km)
+            return items, {"ok": True, "items": len(items), "error": ""}
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("EONET fetch failed: %s", err)
+            return [], {"ok": False, "items": 0, "error": str(err)}
+
+    def _normalize_usgs_items(
+        self,
+        data: Any,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> list[dict]:
+        """Convert USGS GeoJSON earthquakes into scored items."""
+        features = data.get("features") if isinstance(data, dict) else None
+        if not isinstance(features, list):
+            return []
+
+        items: list[dict] = []
+        for feature in features:
+            if not isinstance(feature, dict):
+                continue
+            properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+            geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+            coordinates = geometry.get("coordinates")
+            if not isinstance(coordinates, list) or len(coordinates) < 2:
+                continue
+            lon = self._to_float_or_none(coordinates[0])
+            lat = self._to_float_or_none(coordinates[1])
+            mag = self._to_float_or_none(properties.get("mag")) or 0.0
+            if lat is None or lon is None:
+                continue
+
+            is_germany = self._is_in_germany(lat, lon)
+            is_local = self._is_within_radius(home_center, lat, lon, radius_km)
+            if mag < 4.5 and not is_germany and not is_local:
+                continue
+
+            title = str(properties.get("title") or properties.get("place") or "Erdbeben").strip()
+            place = str(properties.get("place") or "").strip()
+            published = self._timestamp_from_epoch_ms(properties.get("time"))
+            score = 4 + min(14, int(round(mag * 2)))
+            if is_germany:
+                score += 4
+            if is_local:
+                score += 6
+            if mag >= 6.0:
+                score += 4
+            summary = f"USGS Erdbeben Magnitude {mag:.1f}"
+            if place:
+                summary = f"{summary} bei {place}"
+            items.append(
+                self._build_structured_item(
+                    title=title,
+                    summary=summary,
+                    source="usgs",
+                    published=published,
+                    score=score,
+                    region="de" if is_germany or is_local else "world",
+                    latitude=lat,
+                    longitude=lon,
+                    severity=f"M{mag:.1f}",
+                    keywords=["erdbeben"],
+                )
+            )
+        return items[:12]
+
+    async def _fetch_eonet_items(
+        self,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> list[dict]:
+        """Fetch and merge EONET events relevant for Germany and the local radius."""
+        params_list = [
+            self._eonet_query_params_from_bbox(GERMANY_BBOX, days=14, limit=40),
+        ]
+        local_bbox = self._bbox_for_home_radius(home_center, radius_km)
+        if local_bbox is not None:
+            params_list.append(self._eonet_query_params_from_bbox(local_bbox, days=14, limit=25))
+
+        responses = await asyncio.gather(
+            *(fetch_json(self.hass, f"{EONET_EVENTS_API_URL}?{params}") for params in params_list),
+            return_exceptions=True,
+        )
+
+        merged: list[dict] = []
+        seen: set[str] = set()
+        for response in responses:
+            if isinstance(response, Exception):
+                continue
+            events = response.get("events") if isinstance(response, dict) else None
+            if not isinstance(events, list):
+                continue
+            for event in events:
+                item = self._normalize_eonet_event(event, home_center, radius_km)
+                if item is None:
+                    continue
+                key = str(item.get("link") or item.get("title") or "")
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(item)
+
+        merged.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+        return merged[:14]
 
     def _delta_from_history(self, key: str, current: int, target_time) -> int | None:
         """Find nearest sample at or before target time and return delta from now."""
@@ -1611,11 +1770,177 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 return None
         return None
 
+    def _timestamp_from_epoch_ms(self, value) -> str:
+        """Convert a Unix epoch in milliseconds to an ISO timestamp."""
+        numeric = self._to_float_or_none(value)
+        if numeric is None:
+            return ""
+        return dt_util.utc_from_timestamp(numeric / 1000).replace(microsecond=0).isoformat()
+
+    def _build_structured_item(
+        self,
+        *,
+        title: str,
+        summary: str,
+        source: str,
+        published: str,
+        score: int,
+        region: str,
+        latitude: float | None,
+        longitude: float | None,
+        severity: str = "",
+        keywords: list[str] | None = None,
+        link: str = "",
+        military_score: int = 0,
+    ) -> dict:
+        """Create a normalized scored item from structured event data."""
+        return {
+            "title": title,
+            "link": link,
+            "summary": summary,
+            "published": published,
+            "source": source,
+            "score": min(max(int(score), 0), 100),
+            "keywords": keywords or [],
+            "priority_keywords": [],
+            "military_keywords": [],
+            "military_score": min(max(int(military_score), 0), 100),
+            "region": region,
+            "latitude": latitude,
+            "longitude": longitude,
+            "severity": severity,
+        }
+
     def _normalize_text(self, value: str) -> str:
         """Normalize user-facing place names for matching."""
         normalized = unicodedata.normalize("NFKD", str(value or ""))
         ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
         return re.sub(r"[^a-z0-9]+", "", ascii_text.lower())
+
+    def _is_in_germany(self, lat: float, lon: float) -> bool:
+        """Return whether a coordinate lies within a rough Germany bounding box."""
+        min_lon, max_lat, max_lon, min_lat = GERMANY_BBOX
+        return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
+
+    def _is_within_radius(
+        self,
+        home_center: tuple[float | None, float | None],
+        lat: float,
+        lon: float,
+        radius_km: int,
+    ) -> bool:
+        """Return whether a point lies within the configured local radius."""
+        home_lat, home_lon = home_center
+        if home_lat is None or home_lon is None:
+            return False
+        return self._haversine_km(home_lat, home_lon, lat, lon) <= radius_km
+
+    def _bbox_for_home_radius(
+        self,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> tuple[float, float, float, float] | None:
+        """Build an EONET-style bbox around the Home location."""
+        home_lat, home_lon = home_center
+        if home_lat is None or home_lon is None:
+            return None
+        lat_delta = radius_km / 111.0
+        lon_scale = max(0.2, math.cos(math.radians(home_lat)))
+        lon_delta = radius_km / (111.0 * lon_scale)
+        return (
+            round(home_lon - lon_delta, 4),
+            round(home_lat + lat_delta, 4),
+            round(home_lon + lon_delta, 4),
+            round(home_lat - lat_delta, 4),
+        )
+
+    def _eonet_query_params_from_bbox(
+        self,
+        bbox: tuple[float, float, float, float],
+        *,
+        days: int,
+        limit: int,
+    ) -> str:
+        """Return encoded EONET query parameters for a bbox search."""
+        min_lon, max_lat, max_lon, min_lat = bbox
+        return (
+            f"status=all&days={days}&limit={limit}"
+            f"&bbox={min_lon},{max_lat},{max_lon},{min_lat}"
+        )
+
+    def _normalize_eonet_event(
+        self,
+        event: dict,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> dict | None:
+        """Convert an EONET event into a scored item."""
+        if not isinstance(event, dict):
+            return None
+        geometry_entries = event.get("geometry")
+        if not isinstance(geometry_entries, list) or not geometry_entries:
+            return None
+        latest_geometry = geometry_entries[-1]
+        lat, lon = self._extract_eonet_geometry_center(latest_geometry)
+        if lat is None or lon is None:
+            return None
+
+        categories = event.get("categories") if isinstance(event.get("categories"), list) else []
+        category_titles = [
+            str(category.get("title") or category.get("id") or "").strip()
+            for category in categories
+            if isinstance(category, dict)
+        ]
+        category_text = ", ".join(title for title in category_titles if title)
+        source_titles = [
+            str(source.get("id") or source.get("title") or "").strip()
+            for source in (event.get("sources") if isinstance(event.get("sources"), list) else [])
+            if isinstance(source, dict)
+        ]
+        title = str(event.get("title") or "Naturereignis").strip()
+        link = str(event.get("link") or "").strip()
+        published = str(latest_geometry.get("date") or event.get("closed") or "")
+        is_germany = self._is_in_germany(lat, lon)
+        is_local = self._is_within_radius(home_center, lat, lon, radius_km)
+        if not is_germany and not is_local:
+            return None
+
+        score = self._score_eonet_categories(category_titles)
+        if is_local:
+            score += 5
+        summary_parts = [part for part in (category_text, ", ".join(source_titles[:2])) if part]
+        summary = " | ".join(summary_parts) or "NASA EONET Naturereignis"
+        return self._build_structured_item(
+            title=title,
+            summary=summary,
+            source="eonet",
+            published=published,
+            score=score,
+            region="de",
+            latitude=lat,
+            longitude=lon,
+            severity=category_text or "Naturereignis",
+            keywords=[title.lower() for title in category_titles[:2] if title] or ["naturereignis"],
+            link=link,
+        )
+
+    def _extract_eonet_geometry_center(self, geometry: dict) -> tuple[float | None, float | None]:
+        """Return a representative coordinate for an EONET geometry object."""
+        if not isinstance(geometry, dict):
+            return None, None
+        geojson = {"features": [{"geometry": {"coordinates": geometry.get("coordinates")}}]}
+        return self._centroid_from_geojson(geojson)
+
+    def _score_eonet_categories(self, categories: list[str]) -> int:
+        """Assign a simple risk score to public natural-event categories."""
+        normalized = [self._normalize_text(category) for category in categories]
+        if any(category in normalized for category in ("severestorms", "wildfires", "floods")):
+            return 14
+        if any(category in normalized for category in ("volcanoes", "landslides")):
+            return 12
+        if any(category in normalized for category in ("seaandlakeice", "drought")):
+            return 9
+        return 8
 
     def _centroid_from_geojson(self, geojson: dict) -> tuple[float | None, float | None]:
         """Compute a simple centroid from GeoJSON geometry."""
@@ -1806,6 +2131,11 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         home_center: tuple[float | None, float | None],
     ) -> tuple[float | None, float | None, str]:
         """Resolve a best-effort coordinate for a news item."""
+        direct_lat = self._to_float_or_none(item.get("latitude"))
+        direct_lon = self._to_float_or_none(item.get("longitude"))
+        if direct_lat is not None and direct_lon is not None:
+            return direct_lat, direct_lon, str(item.get("severity") or "Ereignis mit Koordinaten")
+
         text = f"{item.get('title', '')} {item.get('summary', '')}"
         normalized_text = self._normalize_text(text)
         home_lat, home_lon = home_center
@@ -1946,6 +2276,12 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 seen.add(key)
                 items.append(item)
         for item in scored:
+            if self._is_item_within_radius(item, home_center, radius_km):
+                key = str(item.get("link") or item.get("title") or "")
+                if key and key not in seen:
+                    seen.add(key)
+                    items.append(item)
+                continue
             if not self._matches_local_keywords(item, local_keywords):
                 continue
             key = str(item.get("link") or item.get("title") or "")
@@ -1954,6 +2290,19 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 items.append(item)
         items.sort(key=lambda item: item["score"], reverse=True)
         return items[:limit]
+
+    def _is_item_within_radius(
+        self,
+        item: dict,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> bool:
+        """Return whether a scored item is geocoded within the local radius."""
+        lat = self._to_float_or_none(item.get("latitude"))
+        lon = self._to_float_or_none(item.get("longitude"))
+        if lat is None or lon is None:
+            return False
+        return self._is_within_radius(home_center, lat, lon, radius_km)
 
     def _select_local_alerts_for_headlines(
         self,

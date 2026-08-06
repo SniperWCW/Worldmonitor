@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "lage_monitor"
 FRONTEND_BASE_URL = f"/{DOMAIN}_frontend"
 CARD_FILENAME = "lage-monitor-card.js"
-CARD_RESOURCE_VERSION = "0.1.34"
+CARD_RESOURCE_VERSION = "0.1.37"
 CARD_RESOURCE_URL = f"{FRONTEND_BASE_URL}/{CARD_FILENAME}?v={CARD_RESOURCE_VERSION}"
 
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -41,6 +41,10 @@ DEFAULT_FOCUS_MODE = "germany"
 DEFAULT_LOCAL_KEYWORDS = ""
 DEFAULT_CUSTOM_PRESS_FEEDS = ""
 DEFAULT_ALERT_RADIUS_KM = 50
+
+USGS_EARTHQUAKE_FEED_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
+EONET_EVENTS_API_URL = "https://eonet.gsfc.nasa.gov/api/v3/events"
+GERMANY_BBOX = (5.5, 55.2, 15.6, 47.0)
 
 ATTR_ALERTS = "alerts"
 ATTR_HEADLINES = "headlines"
