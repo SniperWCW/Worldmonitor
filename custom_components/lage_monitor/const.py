@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "lage_monitor"
 FRONTEND_BASE_URL = f"/{DOMAIN}_frontend"
 CARD_FILENAME = "lage-monitor-card.js"
-CARD_RESOURCE_VERSION = "0.2.0"
+CARD_RESOURCE_VERSION = "0.2.1"
 CARD_RESOURCE_URL = f"{FRONTEND_BASE_URL}/{CARD_FILENAME}?v={CARD_RESOURCE_VERSION}"
 
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -61,6 +61,7 @@ FETCH_CONCURRENCY = 6
 UPDATE_FAILURES_BEFORE_UNAVAILABLE = 3
 
 ATTR_ALERTS = "alerts"
+ATTR_LOCAL_ALERTS = "local_alerts"
 ATTR_HEADLINES = "headlines"
 ATTR_LOCAL_HEADLINES = "local_headlines"
 ATTR_GERMANY_HEADLINES = "germany_headlines"
@@ -72,6 +73,7 @@ ATTR_TOP_KEYWORDS = "top_keywords"
 ATTR_MAP_MARKERS = "map_markers"
 ATTR_MILITARY_ITEMS = "military_items"
 ATTR_MILITARY_ITEMS_GERMANY = "military_items_germany"
+ATTR_MILITARY_ITEMS_LOCAL = "military_items_local"
 ATTR_MILITARY_ITEMS_WORLD = "military_items_world"
 ATTR_MILITARY_SIGNAL_GERMANY = "military_signal_germany"
 ATTR_MILITARY_SIGNAL_WORLD = "military_signal_world"
@@ -91,6 +93,7 @@ ATTR_HISTORY_SUMMARY = "history_summary"
 ATTR_SOURCE_FRESHNESS = "source_freshness"
 ATTR_DATA_QUALITY = "data_quality"
 ATTR_THEME_SCORES = "theme_scores"
+ATTR_SCOPE_COUNTS = "scope_counts"
 
 WARNUNG_BUND_BASE_URL = "https://warnung.bund.de/api31"
 WARNUNG_BUND_ASSETS_BASE_URL = "https://warnung.bund.de/assets/json"

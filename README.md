@@ -31,12 +31,14 @@ Custom Home Assistant integration plus Lovelace card for a German and global sit
 The richest attributes live on the Germany score entity:
 
 - `alerts`
+- `local_alerts`
 - `analysis_summary`
 - `headlines`
 - `sources`
 - `last_update`
 - `map_markers`
 - `military_items`
+- `military_items_local`
 - `risk_drivers`
 - `score_trend`
 - `source_status`
@@ -45,6 +47,7 @@ The richest attributes live on the Germany score entity:
 - `top_keywords`
 - `data_quality`
 - `theme_scores`
+- `scope_counts`
 - `history_summary`
 - `source_freshness`
 

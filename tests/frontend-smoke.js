@@ -48,6 +48,7 @@ card.hass = {
         global_score: 58,
         local_score: 84,
         alerts: [],
+        local_alerts: [],
         local_headlines: [{
           title: "<img src=x onerror=alert(1)>",
           summary: "<script>bad()</script>",
@@ -60,9 +61,10 @@ card.hass = {
         world_headlines: [],
         map_markers: [],
         military_items_germany: [],
+        military_items_local: [],
         military_items_world: [],
         analysis_summary: {
-          local: { headline: "Im Umkreis aktuell ruhig.", changes: [] }
+          local: { headline: "Im Umkreis aktuell ruhig.", status: { key: "good", label: "Ruhig" }, changes: [] }
         },
         history_summary: { local: { series: [80, 84], label_24h: "+4", label_7d: "0" } },
         source_freshness: [],
@@ -74,6 +76,7 @@ card.hass = {
           scope_sources: { local: 1, germany: 2, world: 1 }
         },
         theme_scores: { local: {} },
+        scope_counts: { local: { alerts: 0, military: 0 } },
         diagnostics: { alert_radius_km: 25 },
         last_update: "2026-10-03T12:00:00+00:00",
         top_keywords: []

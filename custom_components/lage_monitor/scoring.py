@@ -92,6 +92,10 @@ PRIORITY_FLOOR = 24
 # On police feeds the word "polizei" carries no information.
 POLICE_FEED_NEUTRAL: frozenset[str] = frozenset({"polizei"})
 
+# Routine police notices should remain visible as context, but must not rank
+# like public-impact incidents. Priority/strong terms bypass this cap.
+ROUTINE_POLICE_SCORE_CAP = 7
+
 SPORT_MARKERS: tuple[str, ...] = (
     "bundesliga", "fußball", "fussball", "dfb", "champions league", "europa league",
     "handball", "basketball", "eishockey", "formel 1", "tennis", "spieltag",
@@ -256,6 +260,9 @@ def score_text(title: str, summary: str, source: str) -> ScoreResult:
 
     if factor < 1.0:
         score = int(score * factor)
+
+    if is_police_feed and not strong_hit and not priority:
+        score = min(score, ROUTINE_POLICE_SCORE_CAP)
 
     state = None
     dienst = geo.parse_dienststelle(title)

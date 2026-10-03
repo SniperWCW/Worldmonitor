@@ -133,6 +133,10 @@ const CARD_STYLE = `
     color: var(--secondary-text-color);
     font-size: 0.84rem;
     line-height: 1.4;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
   }
   .sparkline-wrap {
     grid-column: 1 / -1;
@@ -209,11 +213,34 @@ const CARD_STYLE = `
     gap: 9px;
   }
   .theme-card {
+    appearance: none;
+    width: 100%;
     min-width: 0;
     padding: 11px;
     border-radius: 14px;
     background: rgba(248, 250, 252, 0.92);
     border: 1px solid rgba(148, 163, 184, 0.18);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  }
+  .theme-card:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--primary-color, #2563eb) 45%, transparent);
+  }
+  .theme-card:focus-visible {
+    outline: 2px solid var(--primary-color, #2563eb);
+    outline-offset: 2px;
+  }
+  .theme-card.active {
+    border-color: var(--primary-color, #2563eb);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color, #2563eb) 18%, transparent);
+    transform: translateY(-1px);
+  }
+  .theme-card:disabled {
+    cursor: default;
+    opacity: 0.58;
   }
   .theme-name {
     color: var(--secondary-text-color);
@@ -235,6 +262,40 @@ const CARD_STYLE = `
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, #22c55e, #f59e0b 55%, #dc2626);
+  }
+  .trend-pending {
+    margin-top: 12px;
+    color: var(--secondary-text-color);
+    font-size: 0.8rem;
+    line-height: 1.35;
+  }
+  .event-actions {
+    display: flex;
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .event-more {
+    appearance: none;
+    padding: 8px 14px;
+    border: 1px solid rgba(37, 99, 235, 0.28);
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.07);
+    color: var(--primary-color, #2563eb);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 750;
+    cursor: pointer;
+  }
+  .secondary-events {
+    margin-top: 14px;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+    padding-top: 10px;
+  }
+  .secondary-events summary {
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 700;
   }
   .quality-summary {
     display: grid;
@@ -1146,7 +1207,18 @@ const CARD_STYLE = `
       font-size: 1.95rem;
     }
     .signal-strip {
-      grid-template-columns: 1fr;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .signal-card {
+      padding: 8px 7px;
+    }
+    .signal-label {
+      font-size: 0.6rem;
+    }
+    .signal-value {
+      font-size: 0.76rem;
+      line-height: 1.2;
     }
     .panel {
       border-radius: 16px;
@@ -1351,6 +1423,16 @@ function getAssessmentStatus(score) {
   return { className: "state-bad", label: "Belastet" };
 }
 
+function getSummaryStatus(summary, score) {
+  const key = String(summary?.status?.key || "");
+  const label = String(summary?.status?.label || "");
+  const classNames = { good: "state-good", medium: "state-medium", bad: "state-bad" };
+  if (classNames[key] && label) {
+    return { className: classNames[key], label };
+  }
+  return getAssessmentStatus(score);
+}
+
 function getAggregateScore(values) {
   const numericValues = values
     .map((value) => Number(value))
@@ -1513,6 +1595,7 @@ function buildMapPoints(markers, homeCenter) {
       kind: marker.kind || "cluster",
       titles: Array.isArray(marker.titles) ? marker.titles : [],
       items: Array.isArray(marker.items) ? marker.items : [],
+      themes: Array.isArray(marker.themes) ? marker.themes : [],
       region: marker.region || "de",
       local: Boolean(marker.local),
       variant: marker.kind === "home" ? "secondary" : ""
@@ -1532,6 +1615,7 @@ function buildMapPoints(markers, homeCenter) {
       kind: "home",
       titles: [],
       items: [],
+      themes: [],
       region: "local",
       local: true,
       variant: "secondary"
@@ -1576,7 +1660,7 @@ function renderScoreCard(label, value, options = {}) {
 }
 
 function renderAssessmentPanel(panelKey, regionLabel, score, summary, metaLabel, open = false) {
-  const state = getAssessmentStatus(score);
+  const state = getSummaryStatus(summary, score);
   const headline = escapeHtml(summary?.headline || "Keine aktuelle Lagebewertung verfügbar.");
   const drivers = escapeHtml(summary?.drivers || "");
   const outlook = escapeHtml(summary?.outlook || "");
@@ -1690,7 +1774,25 @@ function renderEventItem(item) {
   `;
 }
 
-function renderThemeGrid(themes) {
+const THEME_FILTER_KEYWORDS = {
+  security: ["anschlag", "terror", "angriff", "gewalt", "amok", "geisel", "schüsse", "schuesse", "messer", "explosion", "unruhen"],
+  infrastructure: ["ausfall", "blackout", "strom", "energie", "wasser", "trinkwasser", "bahn", "brücke", "bruecke", "verkehr", "netz", "internet", "versorgung"],
+  nature: ["erdbeben", "hochwasser", "überschwemm", "ueberschwemm", "sturm", "orkan", "waldbrand", "wildfire", "hitze", "glatteis", "schnee", "vulkan"],
+  military: ["militär", "militaer", "bundeswehr", "nato", "drohne", "rakete", "soldaten", "truppen", "luftwaffe", "marine"]
+};
+
+function itemMatchesTheme(item, theme) {
+  if (!theme) {
+    return true;
+  }
+  if (Array.isArray(item?.themes) && item.themes.includes(theme)) {
+    return true;
+  }
+  const haystack = `${item?.title || ""} ${item?.summary || ""} ${(item?.keywords || []).join(" ")} ${(item?.military_keywords || []).join(" ")}`.toLowerCase();
+  return (THEME_FILTER_KEYWORDS[theme] || []).some((keyword) => haystack.includes(keyword));
+}
+
+function renderThemeGrid(themes, activeTheme = "") {
   const labels = {
     security: "Sicherheit",
     infrastructure: "Infrastruktur",
@@ -1701,24 +1803,27 @@ function renderThemeGrid(themes) {
     const risk = Math.min(100, Math.max(0, Number(themes?.[key]?.risk) || 0));
     const events = Number(themes?.[key]?.events) || 0;
     return `
-      <div class="theme-card">
+      <button class="theme-card ${activeTheme === key ? "active" : ""}" type="button" data-theme="${key}" aria-pressed="${activeTheme === key ? "true" : "false"}" ${events ? "" : "disabled"}>
         <div class="theme-name">${label}</div>
         <div class="theme-risk">${risk}<small>/100</small></div>
         <div class="risk-track"><div class="risk-fill" style="width:${risk}%"></div></div>
         <div class="event-time">${events} Signal${events === 1 ? "" : "e"}</div>
-      </div>
+      </button>
     `;
   }).join("")}</div>`;
 }
 
-function filterMapPoints(points, focus) {
+function filterMapPoints(points, focus, theme = "") {
+  const themeFiltered = theme
+    ? points.filter((point) => point.kind === "home" || itemMatchesTheme(point, theme) || point.items.some((item) => itemMatchesTheme(item, theme)))
+    : points;
   if (focus === "world") {
-    return points.filter((point) => point.kind !== "home" && point.region === "world");
+    return themeFiltered.filter((point) => point.kind !== "home" && point.region === "world");
   }
   if (focus === "local") {
-    return points.filter((point) => point.kind === "home" || point.local);
+    return themeFiltered.filter((point) => point.kind === "home" || point.local);
   }
-  return points.filter((point) => point.kind === "home" || point.region !== "world");
+  return themeFiltered.filter((point) => point.kind === "home" || point.region !== "world");
 }
 
 class LageMonitorCard extends HTMLElement {
@@ -1730,7 +1835,9 @@ class LageMonitorCard extends HTMLElement {
       map: false,
       alerts: false,
       military: false,
-      data: false
+      data: false,
+      eventsExpanded: false,
+      theme: ""
     };
     this._lastMarkup = "";
     this._lastMapSignature = "";
@@ -1772,7 +1879,7 @@ class LageMonitorCard extends HTMLElement {
     const germanyHeadlines = (attrs.germany_headlines || []).slice(0, config.limit);
     const worldHeadlines = (attrs.world_headlines || []).slice(0, config.limit);
     const alertItems = attrs.alerts || [];
-    const alerts = alertItems.slice(0, 10);
+    const localAlertItems = attrs.local_alerts || [];
     const keywords = (attrs.top_keywords || []).slice(0, 6);
     const markers = attrs.map_markers || [];
     const analysisSummary = attrs.analysis_summary || {};
@@ -1780,6 +1887,7 @@ class LageMonitorCard extends HTMLElement {
     const sourceFreshness = (attrs.source_freshness || []).slice(0, 8);
     const dataQuality = attrs.data_quality || {};
     const themeScores = attrs.theme_scores || {};
+    const scopeCounts = attrs.scope_counts || {};
     const germanyScore = toNumberOrNull(stateObj.state);
     const globalScore = attrs.global_score ?? "-";
     const localScore = attrs.local_score ?? "-";
@@ -1800,7 +1908,9 @@ class LageMonitorCard extends HTMLElement {
         history: historySummary.local || {},
         headlines: localHeadlines,
         themes: themeScores.local || {},
-        military: (attrs.military_items_germany || []).slice(0, 10)
+        military: (attrs.military_items_local || []).slice(0, 10),
+        alerts: localAlertItems.slice(0, 10),
+        alertCount: Number(scopeCounts.local?.alerts ?? localAlertItems.length) || 0
       },
       germany: {
         label: "Deutschland",
@@ -1809,7 +1919,9 @@ class LageMonitorCard extends HTMLElement {
         history: historySummary.germany || {},
         headlines: germanyHeadlines,
         themes: themeScores.germany || {},
-        military: (attrs.military_items_germany || []).slice(0, 10)
+        military: (attrs.military_items_germany || []).slice(0, 10),
+        alerts: alertItems.slice(0, 10),
+        alertCount: Number(scopeCounts.germany?.alerts ?? activeAlerts) || 0
       },
       world: {
         label: "Welt",
@@ -1818,15 +1930,32 @@ class LageMonitorCard extends HTMLElement {
         history: historySummary.world || {},
         headlines: worldHeadlines,
         themes: themeScores.world || {},
-        military: (attrs.military_items_world || []).slice(0, 10)
+        military: (attrs.military_items_world || []).slice(0, 10),
+        alerts: [],
+        alertCount: Number(scopeCounts.world?.alerts) || 0
       }
     };
     const current = focusConfig[focus];
-    const scoreState = getAssessmentStatus(current.score);
+    const scoreState = getSummaryStatus(current.summary, current.score);
     const changes = Array.isArray(current.summary?.changes) ? current.summary.changes : [];
+    const meaningfulChanges = changes.filter((item) => !String(item).toLowerCase().includes("noch keine"));
     const scopeSources = Number(dataQuality.scope_sources?.[focus]) || 0;
     const delta24h = current.history?.label_24h || formatDelta(current.history?.delta_24h);
-    const mapPoints = filterMapPoints(allMapPoints, focus);
+    const activeTheme = current.themes?.[this._panelState.theme]?.events
+      ? this._panelState.theme
+      : "";
+    const filteredHeadlines = current.headlines.filter((item) => itemMatchesTheme(item, activeTheme));
+    const relevantEvents = filteredHeadlines.filter((item) => Number(item?.score) >= 8);
+    const secondaryEvents = filteredHeadlines.filter((item) => {
+      const score = Number(item?.score);
+      return Number.isFinite(score) && score >= 4 && score < 8;
+    });
+    const visibleEvents = this._panelState.eventsExpanded ? relevantEvents : relevantEvents.slice(0, 3);
+    const hiddenEventCount = Math.max(0, relevantEvents.length - visibleEvents.length);
+    const historySeries = Array.isArray(current.history?.series)
+      ? current.history.series.map(Number).filter(Number.isFinite)
+      : [];
+    const mapPoints = filterMapPoints(allMapPoints, focus, activeTheme);
     const realMarkerCount = getRealMarkerCount(mapPoints);
     const mapStatus = realMarkerCount > 0
       ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} im gewählten Fokus.`
@@ -1860,19 +1989,19 @@ class LageMonitorCard extends HTMLElement {
                   <div class="focus-headline">${escapeHtml(current.summary?.headline || "Noch keine Lageeinschätzung verfügbar.")}</div>
                   ${current.summary?.drivers ? `<div class="focus-driver">${escapeHtml(current.summary.drivers)}</div>` : ""}
                 </div>
-                <div class="sparkline-wrap">
-                  ${renderSparkline(current.history?.series)}
-                  <div class="trend-copy">24 h: ${escapeHtml(delta24h)}<br>7 Tage: ${escapeHtml(current.history?.label_7d || formatDelta(current.history?.delta_7d))}</div>
-                </div>
+                ${historySeries.length >= 2 ? `
+                  <div class="sparkline-wrap">
+                    ${renderSparkline(historySeries)}
+                    <div class="trend-copy">24 h: ${escapeHtml(delta24h)}<br>7 Tage: ${escapeHtml(current.history?.label_7d || formatDelta(current.history?.delta_7d))}</div>
+                  </div>
+                ` : `<div class="trend-pending">→ Trend baut sich mit weiteren Updates auf.</div>`}
               </div>
               <div class="signal-strip">
                 <div class="signal-card"><div class="signal-label">Datenqualität</div><div class="signal-value">${qualityScore === null ? "–" : `${qualityScore}/100`} · ${escapeHtml(qualityLabel)}</div></div>
                 <div class="signal-card"><div class="signal-label">Quellen im Fokus</div><div class="signal-value">${scopeSources}</div></div>
-                <div class="signal-card"><div class="signal-label">Amtliche Warnungen</div><div class="signal-value">${activeAlerts}</div></div>
+                <div class="signal-card"><div class="signal-label">Amtliche Warnungen</div><div class="signal-value">${current.alertCount}</div></div>
               </div>
-              <ul class="change-list">
-                ${(changes.length ? changes : ["Noch keine belastbare Vergleichsbasis vorhanden."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-              </ul>
+              ${meaningfulChanges.length ? `<ul class="change-list"><li>${escapeHtml(meaningfulChanges[0])}</li></ul>` : ""}
             </div>
           </div>
           <div class="grid">
@@ -1882,18 +2011,26 @@ class LageMonitorCard extends HTMLElement {
                 <div class="panel-note">0 = ruhig · 100 = hoch</div>
               </div>
               <div class="panel-body">
-                ${renderThemeGrid(current.themes)}
+                ${renderThemeGrid(current.themes, activeTheme)}
               </div>
             </div>
             <div class="panel">
               <div class="panel-head">
                 <div class="panel-title">Relevante Ereignisse</div>
-                <div class="panel-note">${current.headlines.length} Treffer</div>
+                <div class="panel-note">${relevantEvents.length} Treffer${activeTheme ? " · gefiltert" : ""}</div>
               </div>
               <div class="panel-body">
                 <div class="items">
-                  ${current.headlines.length ? current.headlines.map(renderEventItem).join("") : `<div class="empty">Keine relevanten Ereignisse in diesem Fokus.</div>`}
+                  ${visibleEvents.length ? visibleEvents.map(renderEventItem).join("") : `<div class="empty">Keine relevanten Ereignisse in diesem Fokus${activeTheme ? " und Thema" : ""}.</div>`}
                 </div>
+                ${hiddenEventCount ? `<div class="event-actions"><button class="event-more" type="button" data-event-action="expand">${hiddenEventCount} weitere anzeigen</button></div>` : ""}
+                ${this._panelState.eventsExpanded && relevantEvents.length > 3 ? `<div class="event-actions"><button class="event-more" type="button" data-event-action="collapse">Weniger anzeigen</button></div>` : ""}
+                ${secondaryEvents.length ? `
+                  <details class="secondary-events">
+                    <summary>Weitere Hinweise (${secondaryEvents.length})</summary>
+                    <div class="items">${secondaryEvents.map(renderEventItem).join("")}</div>
+                  </details>
+                ` : ""}
               </div>
             </div>
             ${config.show_map ? `
@@ -1912,10 +2049,10 @@ class LageMonitorCard extends HTMLElement {
             ${renderCollapsiblePanel(
               "alerts",
               "Amtliche Warnungen",
-              `${activeAlerts}`,
+              `${current.alertCount}`,
               `
                 <div class="items">
-                  ${alerts.length ? alerts.map((item) => `
+                  ${current.alerts.length ? current.alerts.map((item) => `
                     <div class="item">
                       <div class="item-top">
                         <span class="source">${escapeHtml(item.source || "")}</span>
@@ -1924,7 +2061,7 @@ class LageMonitorCard extends HTMLElement {
                       ${item.affected_regions ? `<div class="item-meta">Betroffene Region: ${escapeHtml(item.affected_regions)}</div>` : ""}
                       ${item.description ? `<div class="summary alert-summary">${escapeHtml(item.description)}</div>` : ""}
                     </div>
-                  `).join("") : `<div class="empty">Keine Warnungen vorhanden</div>`}
+                  `).join("") : `<div class="empty">Keine Warnungen in diesem Fokus vorhanden</div>`}
                 </div>
               `,
               this._panelState.alerts
@@ -1971,6 +2108,7 @@ class LageMonitorCard extends HTMLElement {
     const mapSignature = JSON.stringify({
       zoom: Number(config.zoom) || 6,
       focus,
+      theme: activeTheme,
       homeCenter,
       points: mapPoints.map((point) => ({
         latitude: Number(point.latitude),
@@ -1980,6 +2118,7 @@ class LageMonitorCard extends HTMLElement {
         count: Number(point.count) || 0,
         source: point.source || "",
         severity: point.severity || "",
+        themes: Array.isArray(point.themes) ? point.themes : [],
         titles: Array.isArray(point.titles) ? point.titles.slice(0, 3) : [],
         items: Array.isArray(point.items) ? point.items.slice(0, 5) : []
       }))
@@ -1994,6 +2133,8 @@ class LageMonitorCard extends HTMLElement {
       this._lastMarkup = markup;
       this._bindPanelToggles();
       this._bindScopeTabs();
+      this._bindThemeFilters();
+      this._bindEventActions();
     }
 
     if (shouldRenderMap && (markupChanged || !this._map || this._lastMapSignature !== mapSignature)) {
@@ -2035,7 +2176,34 @@ class LageMonitorCard extends HTMLElement {
           return;
         }
         this._panelState.focus = focus;
+        this._panelState.theme = "";
+        this._panelState.eventsExpanded = false;
         this._selectedMapPointKey = "";
+        this._persistPanelState();
+        this.hass = this._hass;
+      });
+    });
+  }
+
+  _bindThemeFilters() {
+    this.shadowRoot.querySelectorAll(".theme-card[data-theme]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        const theme = button.dataset.theme || "";
+        this._panelState.theme = this._panelState.theme === theme ? "" : theme;
+        this._panelState.eventsExpanded = false;
+        this._selectedMapPointKey = "";
+        this._persistPanelState();
+        this.hass = this._hass;
+      });
+    });
+  }
+
+  _bindEventActions() {
+    this.shadowRoot.querySelectorAll("[data-event-action]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        this._panelState.eventsExpanded = button.dataset.eventAction === "expand";
         this._persistPanelState();
         this.hass = this._hass;
       });

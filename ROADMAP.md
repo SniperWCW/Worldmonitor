@@ -11,6 +11,8 @@ Stand: 2026-10-03
 - Persistente 24-Stunden- und 7-Tage-Trends mit Sparklines und Normalniveau-Vergleich
 - Getrennte Datenqualitäts- und Quellenfrischeanzeige
 - Themenbelastung für Sicherheit, Infrastruktur, Natur und Militär
+- Interaktive Themenfilter für Ereignisliste und Karte
+- Fokusabhängige Warnungs- und Militärzähler
 - Fokusabhängige Lagekarte mit begrenztem Leaflet-Stacking-Context
 - Konsequente HTML- und URL-Absicherung externer Feedinhalte
 - Korrigierte Integrationsmetadaten und Codeowner

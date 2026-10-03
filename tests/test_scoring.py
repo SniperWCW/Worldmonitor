@@ -83,6 +83,28 @@ class PoliceFeedTests(unittest.TestCase):
     def test_police_feed_is_always_germany(self):
         self.assertEqual("de", score("Meldung zu USA und Iran", source="presseportal_blaulicht").region)
 
+    def test_routine_traffic_accident_is_capped_below_relevant(self):
+        result = score(
+            "POL-S: Zwei leicht Verletzte nach Auffahrunfall",
+            "Bei einem Verkehrsunfall wurden zwei Personen leicht verletzt.",
+            source="presseportal_blaulicht",
+        )
+        self.assertLess(result.score, 8)
+
+    def test_routine_witness_search_is_capped_below_relevant(self):
+        result = score(
+            "POL-S: Unklarer Unfallhergang - Zeugen gesucht",
+            source="presseportal_blaulicht",
+        )
+        self.assertLess(result.score, 8)
+
+    def test_public_impact_police_incident_is_not_capped(self):
+        result = score(
+            "POL-K: Explosion und Evakuierung nach Großbrand",
+            source="presseportal_blaulicht",
+        )
+        self.assertGreaterEqual(result.score, 8)
+
 
 class RegionTests(unittest.TestCase):
     def test_majority_decides_not_order(self):

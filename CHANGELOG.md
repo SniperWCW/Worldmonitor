@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.1 - 2026-10-03
+
+### Changed
+
+- Unified backend and frontend status thresholds so score, label, and narrative agree.
+- Reduced routine police notices below the primary relevance threshold while preserving serious public-impact incidents.
+- Reset persisted score history because the new relevance floor changes score semantics.
+- Made official warning and military counts specific to the selected local, Germany, or world focus.
+- Compact mobile hero now keeps quality signals in one row and avoids empty chart space.
+- Shows three primary events initially, with explicit expansion and lower-priority hints separated.
+
+### Added
+
+- Clickable theme cards that filter both the event list and map.
+- Per-item theme metadata and cluster-based theme signal counts.
+
+### Fixed
+
+- Local scores no longer include contextual events below the relevance threshold.
+- Local military lists no longer reuse all Germany-wide military events.
+- Raw internal source names are no longer appended to the local driver sentence.
+
 ## 0.2.0 - 2026-10-03
 
 ### Changed

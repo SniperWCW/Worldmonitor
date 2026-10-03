@@ -82,6 +82,32 @@ class CoordinatorScoringTests(unittest.TestCase):
         self.assertEqual(1, quality["stale_sources"])
         self.assertLess(quality["score"], 80)
 
+    def test_theme_event_count_uses_clusters_not_duplicate_signals(self):
+        items = [
+            self.item("Trinkwasser fällt in Musterstadt aus", 16, "de", source="a"),
+            self.item("Trinkwasser fällt in Musterstadt aus", 15, "de", source="b"),
+        ]
+        themes = self.c._build_theme_scores(items, self.now)
+        self.assertEqual(1, themes["infrastructure"]["events"])
+
+    def test_status_threshold_matches_frontend_boundary(self):
+        summary = self.c._build_local_analysis_summary(67, [], 25, 0)
+        self.assertEqual("Aufmerksam", summary["status"]["label"])
+        self.assertIn("aufmerksam", summary["headline"])
+
+    def test_structured_items_expose_theme_metadata(self):
+        item = self.c._build_structured_item(
+            title="Trinkwasserversorgung ausgefallen",
+            summary="Störung im Wassernetz",
+            source="mowas",
+            published="",
+            score=12,
+            region="de",
+            latitude=None,
+            longitude=None,
+        )
+        self.assertIn("infrastructure", item["themes"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,6 +35,15 @@ class FrontendContractTests(unittest.TestCase):
         self.assertNotIn("KI Lagebewertung", self.source)
         self.assertIn("Automatische Lageeinschätzung", self.source)
 
+    def test_theme_cards_filter_events_and_map(self):
+        self.assertIn('data-theme="${key}"', self.source)
+        self.assertIn("itemMatchesTheme", self.source)
+        self.assertIn("filterMapPoints(allMapPoints, focus, activeTheme)", self.source)
+
+    def test_mobile_signal_strip_stays_compact(self):
+        mobile = self.source.split("@media (max-width: 420px)", 1)[1]
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr));", mobile)
+
 
 if __name__ == "__main__":
     unittest.main()

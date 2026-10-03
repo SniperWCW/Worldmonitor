@@ -74,12 +74,37 @@ from .const import (
 from . import geo
 from .feed import FeedItem, fetch_feed, fetch_json, fetch_json_conditional, iso_timestamp
 from .fetchcache import FetchResult, ResilientCache, SourcePolicy
-from .scoring import aggregate_risk, baseline_deviation, score_text
+from .scoring import aggregate_risk, baseline_deviation, cluster_items, score_text
 
 _LOGGER = logging.getLogger(__name__)
 COORD_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 OFFICIAL_ALERT_SOURCES = {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}
-SCORE_HISTORY_VERSION = 2
+SCORE_HISTORY_VERSION = 3
+THEME_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "security": (
+        "anschlag", "terror", "angriff", "gewalt", "amok", "geisel",
+        "schuesse", "schüsse", "messer", "explosion", "unruhen", "ausschreit",
+    ),
+    "infrastructure": (
+        "ausfall", "blackout", "strom", "energie", "wasser", "trinkwasser",
+        "bahn", "brücke", "bruecke", "verkehr", "netz", "internet", "versorgung",
+    ),
+    "nature": (
+        "erdbeben", "hochwasser", "überschwemm", "ueberschwemm", "sturm",
+        "orkan", "waldbrand", "wildfire", "hitz", "glatteis", "schnee", "vulkan",
+    ),
+}
+
+
+def _assessment_status(score: int) -> dict[str, str]:
+    """Return the shared status thresholds used by backend and card."""
+    if score >= 70:
+        return {"key": "good", "label": "Ruhig"}
+    if score >= 40:
+        return {"key": "medium", "label": "Aufmerksam"}
+    return {"key": "bad", "label": "Belastet"}
+
+
 @dataclass(slots=True)
 class LageSnapshot:
     """Current aggregated situation."""
@@ -102,9 +127,11 @@ class LageSnapshot:
     germany_headlines: list[dict]
     world_headlines: list[dict]
     alerts: list[dict]
+    local_alerts: list[dict]
     map_markers: list[dict]
     military_items: list[dict]
     military_items_germany: list[dict]
+    military_items_local: list[dict]
     military_items_world: list[dict]
     top_keywords: list[dict]
     sources: list[str]
@@ -120,6 +147,7 @@ class LageSnapshot:
     source_freshness: list[dict[str, str | int | None | bool]]
     data_quality: dict[str, Any]
     theme_scores: dict[str, dict[str, dict[str, int]]]
+    scope_counts: dict[str, dict[str, int]]
 
 
 class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
@@ -201,7 +229,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             _LOGGER.warning("Could not load Lage Monitor history: %s", err)
             return
         if not isinstance(stored, dict) or stored.get("score_version") != SCORE_HISTORY_VERSION:
-            # v0.2.0 changed the score semantics. Mixing older samples into
+            # v0.2.1 changed the relevance floor. Mixing older samples into
             # the new trend line would create a fictitious jump.
             return
         entries = stored.get("entries", [])
@@ -357,22 +385,44 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             alert_radius_km,
             focus_mode,
         )
+        local_alerts = self._select_local_alerts_for_headlines(
+            alerts,
+            local_keywords,
+            home_center,
+            alert_radius_km,
+            focus_mode,
+        )
         germany_headlines = self._build_germany_headlines(scored, local_keywords, news_limit)
         world_headlines = [item for item in scored if item.get("region") == "world"][:news_limit]
+        local_risk_items = [
+            item for item in local_headlines if int(item.get("score") or 0) >= 8
+        ]
 
         now = dt_util.now()
         official_alert_risk = self._normalize_aggregate_risk(
             self._alerts_to_scored_items(alerts), now, scale=42.0, cap=45
         )
         germany_items, world_items = self._split_scope_items(scored)
+        germany_risk_items = [
+            item for item in germany_items if int(item.get("score") or 0) >= 8
+        ]
+        world_risk_items = [
+            item for item in world_items if int(item.get("score") or 0) >= 8
+        ]
+        germany_relevant_headlines = [
+            item for item in germany_headlines if int(item.get("score") or 0) >= 8
+        ]
+        world_relevant_headlines = [
+            item for item in world_headlines if int(item.get("score") or 0) >= 8
+        ]
         germany_police_items = [
-            item for item in germany_items if item.get("source") == "presseportal_blaulicht"
+            item for item in germany_risk_items if item.get("source") == "presseportal_blaulicht"
         ]
         germany_news_items = [
-            item for item in germany_items if item.get("source") != "presseportal_blaulicht"
+            item for item in germany_risk_items if item.get("source") != "presseportal_blaulicht"
         ]
         germany_priority_items = [
-            item for item in germany_items if int(item.get("score") or 0) >= 12
+            item for item in germany_risk_items if int(item.get("score") or 0) >= 12
         ]
         germany_police_risk = self._normalize_aggregate_risk(
             germany_police_items, now, scale=55.0, cap=25
@@ -384,14 +434,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             germany_priority_items, now, scale=55.0, cap=30
         )
         germany_event_risk = self._normalize_aggregate_risk(
-            germany_items, now, scale=90.0, cap=78
+            germany_risk_items, now, scale=90.0, cap=78
         )
         germany_risk_score = self._combine_risks(official_alert_risk, germany_event_risk)
         global_risk_score = self._normalize_aggregate_risk(
-            world_items, now, scale=95.0, cap=100
+            world_risk_items, now, scale=95.0, cap=100
         )
         local_risk_score = self._normalize_aggregate_risk(
-            local_headlines, now, scale=52.0, cap=100
+            local_risk_items, now, scale=52.0, cap=100
         )
         high_priority = sum(1 for item in scored if item["score"] >= 12)
         police_raw_items = sum(1 for item in deduped if item.source == "presseportal_blaulicht")
@@ -406,6 +456,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         military_items_all = [item for item in scored if item["military_score"] >= 8]
         military_items_germany = [item for item in military_items_all if item["region"] == "de"][:10]
         military_items_world = [item for item in military_items_all if item["region"] == "world"][:10]
+        local_keys = {
+            str(item.get("link") or item.get("title") or "") for item in local_headlines
+        }
+        military_items_local = [
+            item
+            for item in military_items_germany
+            if str(item.get("link") or item.get("title") or "") in local_keys
+        ][:10]
         military_items = military_items_all[:10]
         military_signal_germany_risk = self._compute_military_signal(military_items_germany)
         military_signal_world_risk = self._compute_military_signal(military_items_world)
@@ -433,7 +491,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         }
         risk_components = {
             "germany": self._build_risk_components(
-                scored,
+                germany_risk_items,
                 "de",
                 official_alert_risk,
                 germany_police_risk,
@@ -442,32 +500,39 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 military_signal_germany_risk,
             ),
             "world": self._build_risk_components(
-                scored,
+                world_risk_items,
                 "world",
                 0,
                 0,
                 min(35, global_risk_score // 2),
-                min(35, sum(1 for item in world_headlines if int(item.get("score") or 0) >= 12) * 6),
+                min(35, sum(1 for item in world_risk_items if int(item.get("score") or 0) >= 12) * 6),
                 military_signal_world_risk,
             ),
             "local": self._build_risk_components(
-                local_headlines,
+                local_risk_items,
                 "de",
-                min(30, official_alert_risk),
-                min(25, sum(1 for item in local_headlines if item.get("source") == "presseportal_blaulicht") * 5),
+                min(30, self._normalize_aggregate_risk(
+                    self._alerts_to_scored_items(local_alerts), now, scale=42.0, cap=45
+                )),
+                min(25, sum(1 for item in local_risk_items if item.get("source") == "presseportal_blaulicht") * 5),
                 min(35, local_risk_score // 2),
-                min(35, sum(1 for item in local_headlines if int(item.get("score") or 0) >= 12) * 6),
-                military_signal_germany_risk,
+                min(35, sum(1 for item in local_risk_items if int(item.get("score") or 0) >= 12) * 6),
+                self._compute_military_signal(military_items_local),
             ),
         }
         theme_scores = {
-            "germany": self._build_theme_scores(germany_items, now),
-            "world": self._build_theme_scores(world_items, now),
-            "local": self._build_theme_scores(local_headlines, now),
+            "germany": self._build_theme_scores(germany_risk_items, now),
+            "world": self._build_theme_scores(world_risk_items, now),
+            "local": self._build_theme_scores(local_risk_items, now),
+        }
+        scope_counts = {
+            "local": {"alerts": len(local_alerts), "military": len(military_items_local)},
+            "germany": {"alerts": len(alerts), "military": len(military_items_germany)},
+            "world": {"alerts": 0, "military": len(military_items_world)},
         }
         risk_drivers = self._build_risk_drivers(
             score_breakdown,
-            germany_headlines,
+            germany_relevant_headlines,
             alerts,
         )
         score_trend = self._build_score_trend(germany_score, stability_index)
@@ -491,12 +556,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             local_score,
             stability_index,
             active_alerts=len(alerts),
+            local_active_alerts=len(local_alerts),
             military_signal_germany=military_signal_germany,
             military_signal_world=military_signal_world,
             risk_drivers=risk_drivers,
-            germany_headlines=germany_headlines,
-            world_headlines=world_headlines,
-            local_headlines=local_headlines,
+            germany_headlines=germany_relevant_headlines,
+            world_headlines=world_relevant_headlines,
+            local_headlines=local_risk_items,
             alert_radius_km=alert_radius_km,
             history_summary=history_summary,
             data_quality=data_quality,
@@ -534,9 +600,11 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             germany_headlines=germany_headlines,
             world_headlines=world_headlines,
             alerts=alerts[: min(len(alerts), 15)],
+            local_alerts=local_alerts[: min(len(local_alerts), 15)],
             map_markers=map_markers,
             military_items=military_items,
             military_items_germany=military_items_germany,
+            military_items_local=military_items_local,
             military_items_world=military_items_world,
             top_keywords=[
                 {"keyword": keyword, "count": count}
@@ -588,6 +656,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             source_freshness=source_freshness,
             data_quality=data_quality,
             theme_scores=theme_scores,
+            scope_counts=scope_counts,
         )
 
     def _build_score_trend(self, germany_score: int, stability_index: int) -> dict[str, str | int]:
@@ -1010,6 +1079,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         local_score: int,
         stability_index: int,
         active_alerts: int,
+        local_active_alerts: int,
         military_signal_germany: int,
         military_signal_world: int,
         risk_drivers: list[dict],
@@ -1022,12 +1092,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     ) -> dict[str, Any]:
         """Build concise Lagebewertungen for Germany, world, and Home radius."""
         top_driver = risk_drivers[0] if risk_drivers else None
+        status = _assessment_status(germany_score)
         headline = "Deutschland aktuell ruhig."
-        if germany_score <= 25:
+        if germany_score < 25:
             headline = "Deutschland aktuell klar angespannt."
-        elif germany_score <= 45:
+        elif germany_score < 40:
             headline = "Deutschland aktuell spürbar belastet."
-        elif germany_score <= 65:
+        elif germany_score < 70:
             headline = "Deutschland aktuell erhöht aufmerksam, aber nicht akut kritisch."
 
         if stability_index <= 35:
@@ -1053,12 +1124,18 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         germany_summary = {
             "title": "Deutschland",
+            "status": status,
             "headline": headline,
             "drivers": drivers,
             "outlook": outlook,
         }
         world_summary = self._build_world_analysis_summary(global_score, military_signal_world, world_headlines)
-        local_summary = self._build_local_analysis_summary(local_score, local_headlines, alert_radius_km, active_alerts)
+        local_summary = self._build_local_analysis_summary(
+            local_score,
+            local_headlines,
+            alert_radius_km,
+            local_active_alerts,
+        )
 
         summaries = {
             "germany": germany_summary,
@@ -1096,14 +1173,15 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         global_score: int,
         military_signal_world: int,
         world_headlines: list[dict],
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Build a concise global Lagebewertung."""
+        status = _assessment_status(global_score)
         headline = "Weltweit aktuell ruhig."
-        if global_score <= 25:
+        if global_score < 25:
             headline = "Weltweit aktuell klar angespannt."
-        elif global_score <= 45:
+        elif global_score < 40:
             headline = "Weltweit aktuell spürbar belastet."
-        elif global_score <= 65:
+        elif global_score < 70:
             headline = "Weltweit aktuell erhöht aufmerksam."
 
         if military_signal_world <= 45:
@@ -1124,6 +1202,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         return {
             "title": "Welt",
+            "status": status,
             "headline": headline,
             "drivers": drivers,
             "outlook": outlook,
@@ -1135,21 +1214,20 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         local_headlines: list[dict],
         alert_radius_km: int,
         active_alerts: int,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Build a concise local Lagebewertung around Home."""
+        status = _assessment_status(local_score)
         headline = "Im Umkreis aktuell ruhig."
-        if local_score <= 25:
+        if local_score < 25:
             headline = "Im Umkreis aktuell klar angespannt."
-        elif local_score <= 45:
+        elif local_score < 40:
             headline = "Im Umkreis aktuell spürbar belastet."
-        elif local_score <= 65:
+        elif local_score < 70:
             headline = "Im Umkreis aktuell erhöht aufmerksam."
 
         top_local = local_headlines[0] if local_headlines else None
         if top_local:
-            source = str(top_local.get("source") or "").strip()
-            source_label = f" ({source})" if source else ""
-            drivers = f"Prägend im Umkreis von {alert_radius_km} km: {top_local.get('title') or 'ohne Titel'}{source_label}"
+            drivers = f"Prägend im Umkreis von {alert_radius_km} km: {top_local.get('title') or 'ohne Titel'}"
         elif active_alerts:
             drivers = f"Es liegen Warnungen vor, aktuell aber ohne dominante lokale Schwerpunktmeldung im Radius von {alert_radius_km} km."
         else:
@@ -1162,6 +1240,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         return {
             "title": "Umkreis",
+            "status": status,
             "headline": headline,
             "drivers": drivers,
             "outlook": outlook,
@@ -1217,38 +1296,41 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
     def _build_theme_scores(self, items: list[dict], now) -> dict[str, dict[str, int]]:
         """Build explainable thematic risk/safety scores for one scope."""
-        tokens = {
-            "security": (
-                "anschlag", "terror", "angriff", "gewalt", "amok", "geisel",
-                "schuesse", "schüsse", "messer", "explosion", "unruhen", "ausschreit",
-            ),
-            "infrastructure": (
-                "ausfall", "blackout", "strom", "energie", "wasser", "trinkwasser",
-                "bahn", "brücke", "bruecke", "verkehr", "netz", "internet", "versorgung",
-            ),
-            "nature": (
-                "erdbeben", "hochwasser", "überschwemm", "ueberschwemm", "sturm",
-                "orkan", "waldbrand", "wildfire", "hitz", "glatteis", "schnee", "vulkan",
-            ),
-        }
         result: dict[str, dict[str, int]] = {}
-        for key, keywords in tokens.items():
-            matches = []
-            for item in items:
-                haystack = f"{item.get('title', '')} {item.get('summary', '')} {' '.join(item.get('keywords', []))}".lower()
-                if any(keyword in haystack for keyword in keywords):
-                    matches.append(item)
+        for key in THEME_KEYWORDS:
+            matches = [item for item in items if key in self._classify_item_themes(item)]
             risk = self._normalize_aggregate_risk(matches, now, scale=48.0, cap=100)
-            result[key] = {"risk": risk, "score": 100 - risk, "events": len(matches)}
+            result[key] = {
+                "risk": risk,
+                "score": 100 - risk,
+                "events": len(cluster_items(matches)),
+            }
 
-        military_matches = [item for item in items if int(item.get("military_score") or 0) > 0]
+        military_matches = [item for item in items if "military" in self._classify_item_themes(item)]
         military_risk = self._compute_military_signal(military_matches)
         result["military"] = {
             "risk": military_risk,
             "score": 100 - military_risk,
-            "events": len(military_matches),
+            "events": len(cluster_items(military_matches)),
         }
         return result
+
+    def _classify_item_themes(self, item: dict) -> list[str]:
+        """Return stable theme keys for lists, scores, and map filtering."""
+        existing = item.get("themes")
+        if isinstance(existing, list):
+            return [str(value) for value in existing if str(value) in (*THEME_KEYWORDS, "military")]
+        haystack = (
+            f"{item.get('title', '')} {item.get('summary', '')} "
+            f"{' '.join(item.get('keywords', []))}"
+        ).lower()
+        themes = [
+            key for key, keywords in THEME_KEYWORDS.items()
+            if any(keyword in haystack for keyword in keywords)
+        ]
+        if int(item.get("military_score") or 0) > 0 or item.get("military_keywords"):
+            themes.append("military")
+        return themes
 
     def _build_data_quality(
         self,
@@ -1463,7 +1545,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     def _score_item(self, item: FeedItem) -> dict:
         """Score a feed item via the pure scoring module (see scoring.py)."""
         result = score_text(item.title, item.summary, item.source)
-        return {
+        scored_item = {
             "title": item.title,
             "link": item.link,
             "summary": item.summary,
@@ -1481,6 +1563,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "latitude": None,
             "longitude": None,
         }
+        scored_item["themes"] = self._classify_item_themes(scored_item)
+        return scored_item
 
     async def _fetch_warning_centroid(self, identifier: str | None) -> tuple[float | None, float | None]:
         """Fetch warning geometry (cached per warning id) and return a centroid."""
@@ -1898,7 +1982,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         military_score: int = 0,
     ) -> dict:
         """Create a normalized scored item from structured event data."""
-        return {
+        item = {
             "title": title,
             "link": link,
             "summary": summary,
@@ -1915,6 +1999,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "longitude": longitude,
             "severity": severity,
         }
+        item["themes"] = self._classify_item_themes(item)
+        return item
 
     def _normalize_text(self, value: str) -> str:
         """Normalize user-facing place names for matching."""
@@ -2124,11 +2210,18 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "link": str(item.get("link") or ""),
                     "region": str(item.get("region") or "de"),
                     "local": bool(item.get("local")),
+                    "themes": list(item.get("themes") or []),
                 }
                 for item in cluster_alerts[:5]
             ]
             top_titles = [item["title"] for item in cluster_items[:3]]
             sources = sorted({str(item.get("source") or "") for item in cluster_alerts if item.get("source")})
+            themes = sorted({
+                str(theme)
+                for item in cluster_alerts
+                for theme in (item.get("themes") or [])
+                if str(theme)
+            })
             markers.append(
                 {
                     "key": f"cluster:{round(lat, 5)}:{round(lon, 5)}",
@@ -2143,6 +2236,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "items": cluster_items,
                     "region": "world" if all(item.get("region") == "world" for item in cluster_alerts) else "de",
                     "local": any(bool(item.get("local")) for item in cluster_alerts),
+                    "themes": themes,
                 }
             )
 
@@ -2161,6 +2255,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "items": [],
                     "region": "local",
                     "local": True,
+                    "themes": [],
                 }
             )
 
@@ -2180,18 +2275,23 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             lon = alert.get("longitude")
             if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
                 continue
-            items.append(
-                {
-                    "title": str(alert.get("title") or "Warnung"),
-                    "source": str(alert.get("source") or ""),
-                    "severity": str(alert.get("severity") or ""),
-                    "link": str(alert.get("link") or ""),
-                    "latitude": float(lat),
-                    "longitude": float(lon),
-                    "region": "de",
-                    "local": self._is_within_radius(home_center, float(lat), float(lon), radius_km),
-                }
-            )
+            item = {
+                "title": str(alert.get("title") or "Warnung"),
+                "source": str(alert.get("source") or ""),
+                "severity": str(alert.get("severity") or ""),
+                "link": str(alert.get("link") or ""),
+                "latitude": float(lat),
+                "longitude": float(lon),
+                "region": "de",
+                "local": self._is_within_radius(home_center, float(lat), float(lon), radius_km),
+            }
+            item["themes"] = self._classify_item_themes({
+                "title": item["title"],
+                "summary": item["severity"],
+                "keywords": [],
+                "military_score": 0,
+            })
+            items.append(item)
         return items
 
     def _build_news_map_items(
@@ -2244,6 +2344,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "longitude": lon,
                     "region": region,
                     "local": self._is_within_radius(home_center, lat, lon, radius_km),
+                    "themes": list(item.get("themes") or []),
                 }
             )
             scope_counts[region] += 1
@@ -2310,23 +2411,23 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             source = str(alert.get("source") or "nina")
             severity = str(alert.get("severity") or "")
             score = self._score_official_alert(alert)
-            items.append(
-                {
-                    "title": title,
-                    "link": alert.get("link") or "",
-                    "summary": severity or f"{source} im Umkreis von Home",
-                    "published": str(alert.get("sent") or ""),
-                    "published_dt": self._parse_feed_datetime(str(alert.get("sent") or "")),
-                    "source": source,
-                    "score": score,
-                    "keywords": [],
-                    "military_keywords": [],
-                    "military_score": 0,
-                    "region": "de",
-                    "latitude": alert.get("latitude"),
-                    "longitude": alert.get("longitude"),
-                }
-            )
+            item = {
+                "title": title,
+                "link": alert.get("link") or "",
+                "summary": severity or f"{source} im Umkreis von Home",
+                "published": str(alert.get("sent") or ""),
+                "published_dt": self._parse_feed_datetime(str(alert.get("sent") or "")),
+                "source": source,
+                "score": score,
+                "keywords": [],
+                "military_keywords": [],
+                "military_score": 0,
+                "region": "de",
+                "latitude": alert.get("latitude"),
+                "longitude": alert.get("longitude"),
+            }
+            item["themes"] = self._classify_item_themes(item)
+            items.append(item)
         return items
 
     def _score_official_alert(self, alert: dict) -> int:
