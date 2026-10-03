@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from email.utils import parsedate_to_datetime
 import html
@@ -19,7 +19,7 @@ from urllib.parse import quote
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -50,11 +50,20 @@ from .const import (
     DEFAULT_WARN_POLICE,
     DOMAIN,
     EONET_EVENTS_API_URL,
+    ALERTS_MAX_STALE,
+    ALERTS_MIN_INTERVAL,
+    DETAIL_MAX_STALE,
+    DETAIL_MIN_INTERVAL,
+    EVENTS_MAX_STALE,
+    EVENTS_MIN_INTERVAL,
+    FEED_MAX_STALE,
+    FEED_MIN_INTERVAL_NEWS,
+    FEED_MIN_INTERVAL_POLICE,
+    FETCH_CONCURRENCY,
     FOCUS_MODE_LOCAL,
+    UPDATE_FAILURES_BEFORE_UNAVAILABLE,
     GERMANY_BBOX,
     GERMAN_NEWS_FEEDS,
-    KEYWORD_WEIGHTS,
-    MILITARY_KEYWORDS,
     NATIONAL_PRIORITY_KEYWORDS,
     POLICE_COUNT_MODE_ALL,
     PRESSEPORTAL_FEEDS,
@@ -62,61 +71,14 @@ from .const import (
     WARNUNG_BUND_ASSETS_BASE_URL,
     WARNUNG_BUND_BASE_URL,
 )
-from .feed import FeedItem, fetch_feed, fetch_json, iso_timestamp
+from . import geo
+from .feed import FeedItem, fetch_feed, fetch_json, fetch_json_conditional, iso_timestamp
+from .fetchcache import FetchResult, ResilientCache, SourcePolicy
+from .scoring import score_text
 
 _LOGGER = logging.getLogger(__name__)
 COORD_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 OFFICIAL_ALERT_SOURCES = {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}
-NEWS_PLACE_COORDINATES: dict[str, tuple[float, float]] = {
-    "aachen": (50.7753, 6.0839),
-    "augsburg": (48.3705, 10.8978),
-    "berlin": (52.52, 13.405),
-    "bielefeld": (52.0302, 8.5325),
-    "bochum": (51.4818, 7.2162),
-    "bonn": (50.7374, 7.0982),
-    "bremen": (53.0793, 8.8017),
-    "bremervorde": (53.4842, 9.1419),
-    "chemnitz": (50.8278, 12.9214),
-    "cologne": (50.9375, 6.9603),
-    "dortmund": (51.5136, 7.4653),
-    "dresden": (51.0504, 13.7373),
-    "duisburg": (51.4344, 6.7623),
-    "dusseldorf": (51.2277, 6.7735),
-    "erfurt": (50.9848, 11.0299),
-    "essen": (51.4556, 7.0116),
-    "frankfurt": (50.1109, 8.6821),
-    "freiburg": (47.999, 7.8421),
-    "gelsenkirchen": (51.5177, 7.0857),
-    "halle": (51.4825, 11.97),
-    "hamburg": (53.5511, 9.9937),
-    "hannover": (52.3759, 9.732),
-    "karlsruhe": (49.0069, 8.4037),
-    "kassel": (51.3127, 9.4797),
-    "kiel": (54.3233, 10.1228),
-    "koblenz": (50.3569, 7.5889),
-    "koln": (50.9375, 6.9603),
-    "leipzig": (51.3397, 12.3731),
-    "lubeck": (53.8655, 10.6866),
-    "magdeburg": (52.1205, 11.6276),
-    "mainz": (49.9929, 8.2473),
-    "mannheim": (49.4875, 8.466),
-    "munchen": (48.1351, 11.582),
-    "munich": (48.1351, 11.582),
-    "nurnberg": (49.4521, 11.0767),
-    "osnabruck": (52.2799, 8.0472),
-    "potsdam": (52.3906, 13.0645),
-    "regensburg": (49.0134, 12.1016),
-    "rostock": (54.0924, 12.0991),
-    "saarbrucken": (49.2402, 6.9969),
-    "schwerin": (53.6355, 11.4012),
-    "stuttgart": (48.7758, 9.1829),
-    "ulm": (48.4011, 9.9876),
-    "wiesbaden": (50.0782, 8.2398),
-    "wuppertal": (51.2562, 7.1508),
-    "deutschland": (51.1657, 10.4515),
-}
-
-
 @dataclass(slots=True)
 class LageSnapshot:
     """Current aggregated situation."""
@@ -167,6 +129,10 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         self._warnung_gemeinden: dict[str, dict] | None = None
         self._score_history: list[dict[str, Any]] = []
         self._history_loaded = False
+        self._cache = ResilientCache()
+        self._fetch_semaphore = asyncio.Semaphore(FETCH_CONCURRENCY)
+        self._consecutive_failures = 0
+        self._stale_since: str | None = None
         self._history_store: Store = Store(hass, 1, f"{DOMAIN}_{entry.entry_id}_history")
         interval = timedelta(
             seconds=entry.options.get(CONF_SCAN_INTERVAL, entry.data[CONF_SCAN_INTERVAL])
@@ -179,15 +145,47 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         )
 
     async def _async_update_data(self) -> LageSnapshot:
+        """Refresh data; never present an outage as a calm situation.
+
+        Individual sources degrade on their own (see ``fetchcache``). This
+        handler covers failures of the whole refresh: the previous snapshot is
+        kept but flagged ``stale`` in the diagnostics. After several failures
+        in a row the entities become unavailable instead of showing old data
+        as if it were current.
+        """
         try:
             await self._async_load_history()
-            return await self._build_snapshot()
+            snapshot = await self._build_snapshot()
         except Exception as err:  # noqa: BLE001
-            if self.data is not None:
-                _LOGGER.warning("Could not update Lage Monitor, keeping previous data: %s", err)
-                return self.data
-            _LOGGER.warning("Could not update Lage Monitor, using empty snapshot: %s", err)
-            return self._empty_snapshot()
+            self._consecutive_failures += 1
+            if self.data is None:
+                # First refresh: let Home Assistant retry the setup.
+                raise UpdateFailed(f"Initial Lage Monitor refresh failed: {err}") from err
+            if self._consecutive_failures >= UPDATE_FAILURES_BEFORE_UNAVAILABLE:
+                raise UpdateFailed(
+                    f"Lage Monitor refresh failed {self._consecutive_failures} times: {err}"
+                ) from err
+            _LOGGER.warning(
+                "Could not update Lage Monitor (%s in a row), keeping previous data: %s",
+                self._consecutive_failures,
+                err,
+            )
+            if self._stale_since is None:
+                self._stale_since = iso_timestamp()
+            return replace(
+                self.data,
+                diagnostics={
+                    **self.data.diagnostics,
+                    "stale": True,
+                    "stale_since": self._stale_since,
+                    "consecutive_failures": self._consecutive_failures,
+                    "last_error": str(err),
+                },
+            )
+
+        self._consecutive_failures = 0
+        self._stale_since = None
+        return snapshot
 
     async def _async_load_history(self) -> None:
         """Load persisted score history once per coordinator lifetime."""
@@ -306,37 +304,27 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 )
             source_status["warnung_bund"] = official_status
 
+        feed_limit = self._feed_fetch_limit(news_limit)
+        feed_jobs: list[tuple[str, str]] = []
         if self.entry.options.get(CONF_INCLUDE_PRESS, self.entry.data[CONF_INCLUDE_PRESS]):
-            for source, url in self._iter_press_feeds(focus_mode):
-                items, status = await self._safe_fetch_feed(
-                    url,
-                    source,
-                    self._feed_fetch_limit(news_limit),
-                )
-                headlines.extend(items)
-                source_status[source] = status
-            for index, url in enumerate(custom_press_feeds, start=1):
-                source = f"custom_press_{index}"
-                items, status = await self._safe_fetch_feed(
-                    url,
-                    source,
-                    self._feed_fetch_limit(news_limit),
-                )
-                headlines.extend(items)
-                source_status[source] = status
-
+            feed_jobs.extend(self._iter_press_feeds(focus_mode))
+            feed_jobs.extend(
+                (f"custom_press_{index}", url)
+                for index, url in enumerate(custom_press_feeds, start=1)
+            )
         if self.entry.options.get(CONF_INCLUDE_NEWS, self.entry.data[CONF_INCLUDE_NEWS]):
             for source, url in GERMAN_NEWS_FEEDS.items():
                 # Keep one nationwide source available even in local focus mode.
                 if focus_mode == FOCUS_MODE_LOCAL and source != "tagesschau_all":
                     continue
-                items, status = await self._safe_fetch_feed(
-                    url,
-                    source,
-                    self._feed_fetch_limit(news_limit),
-                )
-                headlines.extend(items)
-                source_status[source] = status
+                feed_jobs.append((source, url))
+
+        feed_results = await asyncio.gather(
+            *(self._safe_fetch_feed(url, source, feed_limit) for source, url in feed_jobs)
+        )
+        for (source, _url), (items, status) in zip(feed_jobs, feed_results, strict=True):
+            headlines.extend(items)
+            source_status[source] = status
 
         public_event_items, public_event_status = await self._safe_fetch_public_event_items(
             home_center,
@@ -551,7 +539,22 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 "warn_area": warn_area or "",
                 "resolved_warn_area": resolved_warn_area.get("label", "") if resolved_warn_area else "",
                 "resolved_warn_area_code": resolved_warn_area.get("dashboard_code", "") if resolved_warn_area else "",
+                "home_state": (
+                    geo.state_for_point(float(home_center[0]), float(home_center[1])) or ""
+                    if home_center[0] is not None and home_center[1] is not None
+                    else ""
+                ),
                 "degraded": any(status["ok"] is False for status in source_status.values()),
+                "stale": False,
+                "consecutive_failures": 0,
+                "stale_sources": sorted(
+                    name for name, status in source_status.items() if status.get("stale")
+                ),
+                "failing_sources": sorted(
+                    name
+                    for name, status in source_status.items()
+                    if status["ok"] is False and not status.get("stale")
+                ),
                 "focus_mode": focus_mode,
                 "local_keywords": ", ".join(local_keywords),
                 "alert_radius_km": alert_radius_km,
@@ -573,109 +576,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             risk_components=risk_components,
             history_summary=history_summary,
             source_freshness=source_freshness,
-        )
-
-    def _empty_snapshot(self) -> LageSnapshot:
-        """Return a safe fallback snapshot so entities can still be created."""
-        return LageSnapshot(
-            germany_score=100,
-            global_score=100,
-            local_score=100,
-            active_alerts=0,
-            police_items=0,
-            high_priority_items=0,
-            military_signal_score=100,
-            military_signal_germany=100,
-            military_signal_world=100,
-            stability_index=100,
-            germany_risk_score=0,
-            global_risk_score=0,
-            local_risk_score=0,
-            headlines=[],
-            local_headlines=[],
-            germany_headlines=[],
-            world_headlines=[],
-            alerts=[],
-            map_markers=[],
-            military_items=[],
-            military_items_germany=[],
-            military_items_world=[],
-            top_keywords=[],
-            sources=[],
-            source_status={},
-            diagnostics={
-                "configured_nina_ars": self.entry.options.get(CONF_NINA_ARS, self.entry.data[CONF_NINA_ARS]) or "",
-                "warn_area": self.entry.options.get(CONF_WARN_AREA, self.entry.data.get(CONF_WARN_AREA, "")) or "",
-                "degraded": True,
-                "warn_mowas": self.entry.options.get(
-                    CONF_WARN_MOWAS,
-                    self.entry.data.get(CONF_WARN_MOWAS, DEFAULT_WARN_MOWAS),
-                ),
-                "warn_dwd": self.entry.options.get(
-                    CONF_WARN_DWD,
-                    self.entry.data.get(CONF_WARN_DWD, DEFAULT_WARN_DWD),
-                ),
-                "warn_lhp": self.entry.options.get(
-                    CONF_WARN_LHP,
-                    self.entry.data.get(CONF_WARN_LHP, DEFAULT_WARN_LHP),
-                ),
-                "warn_police": self.entry.options.get(
-                    CONF_WARN_POLICE,
-                    self.entry.data.get(CONF_WARN_POLICE, DEFAULT_WARN_POLICE),
-                ),
-                "sources_total": 0,
-                "sources_ok": 0,
-            },
-            last_update=iso_timestamp(),
-            score_breakdown={
-                "alerts": 0,
-                "police_germany": 0,
-                "news_germany": 0,
-                "high_priority_germany": 0,
-                "local_total": 0,
-                "military_signal": 0,
-                "military_signal_germany": 0,
-                "military_signal_world": 0,
-                "high_priority_items": 0,
-                "police_items": 0,
-            },
-            analysis_summary={
-                "headline": "Keine aktuelle Lagebewertung verfügbar.",
-                "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
-                "outlook": "Nach dem nächsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
-                "germany": {
-                    "title": "Deutschland",
-                    "headline": "Keine aktuelle Lagebewertung verfÃ¼gbar.",
-                    "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
-                    "outlook": "Nach dem nÃ¤chsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
-                },
-                "world": {
-                    "title": "Welt",
-                    "headline": "Keine aktuelle Lagebewertung verfÃ¼gbar.",
-                    "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
-                    "outlook": "Nach dem nÃ¤chsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
-                },
-                "local": {
-                    "title": "Umkreis",
-                    "headline": "Keine aktuelle Lagebewertung verfÃ¼gbar.",
-                    "drivers": "Es liegen derzeit keine belastbaren Eingangsdaten vor.",
-                    "outlook": "Nach dem nÃ¤chsten erfolgreichen Update werden wieder Treiber und Trend angezeigt.",
-                },
-            },
-            risk_drivers=[],
-            score_trend={"delta": 0, "direction": "stable", "label": "Keine Vergleichsdaten"},
-            risk_components={
-                "germany": {"unrest": 0, "conflict": 0, "military": 0, "information": 0},
-                "world": {"unrest": 0, "conflict": 0, "military": 0, "information": 0},
-                "local": {"unrest": 0, "conflict": 0, "military": 0, "information": 0},
-            },
-            history_summary={
-                "germany": {"current": 100, "delta_24h": None, "delta_7d": None, "label_24h": "Keine Daten", "label_7d": "Keine Daten"},
-                "local": {"current": 100, "delta_24h": None, "delta_7d": None, "label_24h": "Keine Daten", "label_7d": "Keine Daten"},
-                "world": {"current": 100, "delta_24h": None, "delta_7d": None, "label_24h": "Keine Daten", "label_7d": "Keine Daten"},
-                "stability": {"current": 100, "delta_24h": None, "delta_7d": None, "label_24h": "Keine Daten", "label_7d": "Keine Daten"},
-            },
-            source_freshness=[],
         )
 
     def _build_score_trend(self, germany_score: int, stability_index: int) -> dict[str, str | int]:
@@ -810,14 +710,23 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         home_center: tuple[float | None, float | None],
         radius_km: int,
     ) -> tuple[list[dict], dict]:
-        """Fetch recent USGS earthquakes and normalize relevant hits."""
+        """Fetch recent USGS earthquakes (cached, conditional) and normalize hits."""
+        policy = SourcePolicy(min_interval=EVENTS_MIN_INTERVAL, max_stale=EVENTS_MAX_STALE)
+
+        async def fetch(etag, last_modified):
+            return await fetch_json_conditional(self.hass, USGS_EARTHQUAKE_FEED_URL, etag, last_modified)
+
+        result = await self._cached_get("events:usgs", fetch, policy)
+        if not result.ok:
+            _LOGGER.warning("USGS %s: %s", "stale" if result.stale else "failed", result.error)
+        if result.value is None:
+            return [], result.status(0)
         try:
-            data = await fetch_json(self.hass, USGS_EARTHQUAKE_FEED_URL)
-            items = self._normalize_usgs_items(data, home_center, radius_km)
-            return items, {"ok": True, "items": len(items), "error": ""}
+            items = self._normalize_usgs_items(result.value, home_center, radius_km)
         except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("USGS fetch failed: %s", err)
-            return [], {"ok": False, "items": 0, "error": str(err)}
+            _LOGGER.warning("USGS data could not be processed: %s", err)
+            return [], {**result.status(0), "ok": False, "error": f"Verarbeitung: {err}"}
+        return items, result.status(len(items))
 
     async def _safe_fetch_eonet_items(
         self,
@@ -825,12 +734,66 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         radius_km: int,
     ) -> tuple[list[dict], dict]:
         """Fetch recent natural events for Germany and the local radius."""
-        try:
-            items = await self._fetch_eonet_items(home_center, radius_km)
-            return items, {"ok": True, "items": len(items), "error": ""}
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("EONET fetch failed: %s", err)
-            return [], {"ok": False, "items": 0, "error": str(err)}
+        params_list = [
+            self._eonet_query_params_from_bbox(GERMANY_BBOX, days=14, limit=40),
+        ]
+        local_bbox = self._bbox_for_home_radius(home_center, radius_km)
+        if local_bbox is not None:
+            params_list.append(self._eonet_query_params_from_bbox(local_bbox, days=14, limit=25))
+
+        policy = SourcePolicy(min_interval=EVENTS_MIN_INTERVAL, max_stale=EVENTS_MAX_STALE)
+
+        def make_fetch(url: str):
+            async def fetch(etag, last_modified):
+                return await fetch_json_conditional(self.hass, url, etag, last_modified)
+
+            return fetch
+
+        results = await asyncio.gather(
+            *(
+                self._cached_get(
+                    f"events:eonet:{index}",
+                    make_fetch(f"{EONET_EVENTS_API_URL}?{params}"),
+                    policy,
+                )
+                for index, params in enumerate(params_list)
+            )
+        )
+
+        merged: list[dict] = []
+        seen: set[str] = set()
+        for result in results:
+            events = result.value.get("events") if isinstance(result.value, dict) else None
+            if not isinstance(events, list):
+                continue
+            for event in events:
+                item = self._normalize_eonet_event(event, home_center, radius_km)
+                if item is None:
+                    continue
+                key = str(item.get("link") or item.get("title") or "")
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(item)
+        merged.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+        items = merged[:14]
+
+        failed = [result for result in results if not result.ok]
+        errors = "; ".join(sorted({result.error for result in failed if result.error}))
+        status = {
+            "ok": not failed,
+            "items": len(items),
+            "error": errors,
+            "state": "error" if failed and all(r.value is None for r in failed) else (
+                "stale" if failed else "fresh"
+            ),
+            "stale": any(result.stale for result in results),
+            "age_seconds": int(max((result.age for result in results), default=0)),
+            "failures": max((result.failures for result in results), default=0),
+        }
+        if failed:
+            _LOGGER.warning("EONET incomplete (%s of %s requests failed): %s", len(failed), len(results), errors)
+        return items, status
 
     def _normalize_usgs_items(
         self,
@@ -860,7 +823,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
             is_germany = self._is_in_germany(lat, lon)
             is_local = self._is_within_radius(home_center, lat, lon, radius_km)
-            if mag < 4.5 and not is_germany and not is_local:
+            is_near = geo.in_neighborhood(lat, lon)
+            if mag < 4.5 and not is_germany and not is_local and not (is_near and mag >= 3.5):
                 continue
 
             title = str(properties.get("title") or properties.get("place") or "Erdbeben").strip()
@@ -891,45 +855,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 )
             )
         return items[:12]
-
-    async def _fetch_eonet_items(
-        self,
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-    ) -> list[dict]:
-        """Fetch and merge EONET events relevant for Germany and the local radius."""
-        params_list = [
-            self._eonet_query_params_from_bbox(GERMANY_BBOX, days=14, limit=40),
-        ]
-        local_bbox = self._bbox_for_home_radius(home_center, radius_km)
-        if local_bbox is not None:
-            params_list.append(self._eonet_query_params_from_bbox(local_bbox, days=14, limit=25))
-
-        responses = await asyncio.gather(
-            *(fetch_json(self.hass, f"{EONET_EVENTS_API_URL}?{params}") for params in params_list),
-            return_exceptions=True,
-        )
-
-        merged: list[dict] = []
-        seen: set[str] = set()
-        for response in responses:
-            if isinstance(response, Exception):
-                continue
-            events = response.get("events") if isinstance(response, dict) else None
-            if not isinstance(events, list):
-                continue
-            for event in events:
-                item = self._normalize_eonet_event(event, home_center, radius_km)
-                if item is None:
-                    continue
-                key = str(item.get("link") or item.get("title") or "")
-                if key in seen:
-                    continue
-                seen.add(key)
-                merged.append(item)
-
-        merged.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
-        return merged[:14]
 
     def _delta_from_history(self, key: str, current: int, target_time) -> int | None:
         """Find nearest sample at or before target time and return delta from now."""
@@ -985,7 +910,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             if latest_dt is not None:
                 age_minutes = max(0, int((now - dt_util.as_local(latest_dt)).total_seconds() // 60))
             label = "Fehler"
-            if status.get("ok") is True:
+            if status.get("stale"):
+                label = "Cache (veraltet)"
+            elif status.get("ok") is True:
                 if age_minutes is None:
                     label = "Keine Zeitdaten"
                 elif age_minutes <= 120:
@@ -1057,52 +984,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         ranked = [driver for driver in drivers if driver["value"] > 0]
         ranked.sort(key=lambda driver: int(driver["value"]), reverse=True)
         return ranked[:4]
-
-    def _build_analysis_summary(
-        self,
-        germany_score: int,
-        stability_index: int,
-        active_alerts: int,
-        military_signal_germany: int,
-        risk_drivers: list[dict],
-        germany_headlines: list[dict],
-    ) -> dict[str, str]:
-        """Build a concise text-based Lagebewertung from structured signals."""
-        top_driver = risk_drivers[0] if risk_drivers else None
-        headline = "Deutschland aktuell ruhig."
-        if germany_score <= 25:
-            headline = "Deutschland aktuell klar angespannt."
-        elif germany_score <= 45:
-            headline = "Deutschland aktuell spürbar belastet."
-        elif germany_score <= 65:
-            headline = "Deutschland aktuell erhöht aufmerksam, aber nicht akut kritisch."
-
-        if stability_index <= 35:
-            headline += " Die Stabilität ist deutlich unter Normalniveau."
-        elif stability_index <= 55:
-            headline += " Die Stabilität bleibt fragil."
-
-        if top_driver is None:
-            drivers = "Aktuell fehlen dominante Risikotreiber in den Eingangsdaten."
-        else:
-            drivers = f"Haupttreiber ist {top_driver['label'].lower()} ({top_driver['detail']})."
-            if germany_headlines:
-                top_title = str(germany_headlines[0].get("title") or "").strip()
-                if top_title:
-                    drivers += f" Prägendes Thema: {top_title}"
-
-        if active_alerts >= 10 and military_signal_germany >= 70:
-            outlook = "Amtliche Warnlagen sind vorhanden, während das Militärsignal in Deutschland derzeit nicht zusätzlich eskaliert."
-        elif military_signal_germany < 50:
-            outlook = "Neben der Nachrichtenlage sollte besonders beobachtet werden, ob sich das Deutschland-bezogene Militärsignal weiter verschärft."
-        else:
-            outlook = "Entscheidend für die nächsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
-
-        return {
-            "headline": headline,
-            "drivers": drivers,
-            "outlook": outlook,
-        }
 
     def _build_analysis_summary(
         self,
@@ -1251,27 +1132,55 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             len(items) * 7 + sum(int(item.get("military_score") or 0) for item in items) // 2,
         )
 
+    async def _cached_get(self, key: str, fetch, policy: SourcePolicy) -> FetchResult:
+        """Run a cached fetch with a global concurrency limit."""
+        async with self._fetch_semaphore:
+            return await self._cache.get(key, fetch, policy)
+
     async def _safe_fetch_feed(self, url: str, source: str, limit: int) -> tuple[list[FeedItem], dict]:
-        """Fetch a feed without aborting the whole integration on failure."""
-        try:
-            items = await fetch_feed(self.hass, url, source, limit)
-            return items, {"ok": True, "items": len(items), "error": ""}
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Feed %s failed: %s", source, err)
-            return [], {"ok": False, "items": 0, "error": str(err)}
+        """Fetch a feed; on failure serve the last good items, flagged as stale."""
+        is_police = source.startswith(("presseportal", "custom_press_"))
+        policy = SourcePolicy(
+            min_interval=FEED_MIN_INTERVAL_POLICE if is_police else FEED_MIN_INTERVAL_NEWS,
+            max_stale=FEED_MAX_STALE,
+        )
+
+        async def fetch(etag, last_modified):
+            return await fetch_feed(self.hass, url, source, limit, etag, last_modified)
+
+        result = await self._cached_get(f"feed:{source}", fetch, policy)
+        if not result.ok:
+            _LOGGER.warning(
+                "Feed %s %s: %s", source, "serving stale data" if result.stale else "failed", result.error
+            )
+        items = result.value or []
+        return items, result.status(len(items))
 
     async def _safe_fetch_official_alerts(
         self,
         resolved_warn_area: dict | None,
         service_filter: dict[str, bool],
     ) -> tuple[list[dict], dict]:
-        """Fetch warnung.bund.de alerts without aborting the whole integration on failure."""
-        try:
+        """Fetch warnung.bund.de alerts; on failure keep the last good list (stale).
+
+        An unreachable warning service must not look like "no warnings".
+        """
+        policy = SourcePolicy(min_interval=ALERTS_MIN_INTERVAL, max_stale=ALERTS_MAX_STALE)
+
+        async def fetch(_etag, _last_modified):
             alerts = await self._fetch_official_alerts(resolved_warn_area, service_filter)
-            return alerts, {"ok": True, "items": len(alerts), "error": ""}
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("warnung.bund.de fetch failed: %s", err)
-            return [], {"ok": False, "items": 0, "error": str(err)}
+            return alerts, None, None
+
+        # No semaphore here: the leaf requests inside take it, avoiding nested waits.
+        result = await self._cache.get("alerts:warnung_bund", fetch, policy)
+        if not result.ok:
+            _LOGGER.warning(
+                "warnung.bund.de %s: %s",
+                "serving stale alerts" if result.stale else "unavailable",
+                result.error,
+            )
+        alerts = [dict(alert) for alert in (result.value or [])]
+        return alerts, result.status(len(alerts))
 
     async def _fetch_official_alerts(
         self,
@@ -1284,8 +1193,20 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             alerts.extend(self._normalize_dashboard_alert(item) for item in dashboard if isinstance(item, dict))
 
         if not alerts:
-            for channel in self._iter_enabled_warn_channels(service_filter):
-                data = await fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/{channel}/mapData.json")
+            channels = self._iter_enabled_warn_channels(service_filter)
+            channel_data = await asyncio.gather(
+                *(
+                    fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/{channel}/mapData.json")
+                    for channel in channels
+                ),
+                return_exceptions=True,
+            )
+            failed_channels = 0
+            for channel, data in zip(channels, channel_data, strict=True):
+                if isinstance(data, Exception):
+                    failed_channels += 1
+                    _LOGGER.warning("Warning channel %s failed: %s", channel, data)
+                    continue
                 if not isinstance(data, list):
                     continue
                 alerts.extend(
@@ -1293,6 +1214,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     for item in data[:50]
                     if isinstance(item, dict)
                 )
+            if channels and failed_channels == len(channels):
+                # Every channel failed: report an error so the stale fallback applies.
+                raise RuntimeError("alle Warnkanäle von warnung.bund.de nicht erreichbar")
 
         unique: dict[str, dict] = {}
         for alert in alerts:
@@ -1304,11 +1228,21 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         resolved = [alert for alert in unique.values() if self._is_service_enabled(alert, service_filter)]
         if resolved:
             await self._enrich_official_alert_details(resolved[:15])
-        for alert in resolved:
-            if alert.get("latitude") is None and alert.get("longitude") is None:
-                lat, lon = await self._fetch_warning_centroid(alert.get("id"))
-                alert["latitude"] = lat
-                alert["longitude"] = lon
+        missing_geo = [
+            alert
+            for alert in resolved
+            if alert.get("latitude") is None and alert.get("longitude") is None
+        ]
+        centroids = await asyncio.gather(
+            *(self._fetch_warning_centroid(alert.get("id")) for alert in missing_geo)
+        )
+        for alert, (lat, lon) in zip(missing_geo, centroids, strict=True):
+            alert["latitude"] = lat
+            alert["longitude"] = lon
+
+        valid_ids = {str(alert.get("id")) for alert in resolved if alert.get("id")}
+        self._cache.prune({f"detail:{i}" for i in valid_ids}, prefix="detail:")
+        self._cache.prune({f"centroid:{i}" for i in valid_ids}, prefix="centroid:")
 
         return resolved
 
@@ -1360,54 +1294,42 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         return parsed if parsed.tzinfo is not None else dt_util.as_utc(parsed)
 
     def _score_item(self, item: FeedItem) -> dict:
-        haystack = f"{item.title} {item.summary}".lower()
-        matched = [keyword for keyword in KEYWORD_WEIGHTS if keyword in haystack]
-        priority_matches = self._national_priority_matches(haystack)
-        military_matched = [keyword for keyword in MILITARY_KEYWORDS if keyword in haystack]
-        score = sum(KEYWORD_WEIGHTS[keyword] for keyword in matched)
-        if priority_matches:
-            score = max(score, 24)
-        military_score = sum(MILITARY_KEYWORDS[keyword] for keyword in military_matched)
-        region = "de"
-        if item.source == "tagesschau_ausland":
-            region = "world"
-            score += 2
-        if item.source.startswith("presseportal") or item.source.startswith("custom_press_"):
-            region = "de"
-            score += 3
-        if any(token in haystack for token in ("deutschland", "berlin", "hamburg", "nrw", "bayern")):
-            region = "de"
-            score += 2
-        if any(token in haystack for token in ("ukraine", "russland", "china", "usa", "iran", "israel")):
-            region = "world"
-            score += 2
-
+        """Score a feed item via the pure scoring module (see scoring.py)."""
+        result = score_text(item.title, item.summary, item.source)
         return {
             "title": item.title,
             "link": item.link,
             "summary": item.summary,
             "published": item.published,
             "source": item.source,
-            "score": min(score, 100),
-            "keywords": list(dict.fromkeys([*matched, *priority_matches])),
-            "priority_keywords": priority_matches,
-            "military_keywords": military_matched,
-            "military_score": min(military_score, 100),
-            "region": region,
+            "score": result.score,
+            "keywords": result.keywords,
+            "priority_keywords": result.priority_keywords,
+            "military_keywords": result.military_keywords,
+            "military_score": result.military_score,
+            "region": result.region,
+            "near_abroad": result.near_abroad,
+            "state": result.state,
             "latitude": None,
             "longitude": None,
         }
 
     async def _fetch_warning_centroid(self, identifier: str | None) -> tuple[float | None, float | None]:
-        """Fetch warning geometry and return a centroid when available."""
+        """Fetch warning geometry (cached per warning id) and return a centroid."""
         if not identifier:
             return None, None
         safe_identifier = quote(str(identifier), safe="")
-        try:
-            geojson = await fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.geojson")
-        except Exception:  # noqa: BLE001
-            return None, None
-        return self._centroid_from_geojson(geojson)
+        url = f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.geojson"
+        policy = SourcePolicy(
+            min_interval=DETAIL_MIN_INTERVAL, max_stale=DETAIL_MAX_STALE, backoff_base=300
+        )
+
+        async def fetch(_etag, _last_modified):
+            geojson = await fetch_json(self.hass, url)
+            return self._centroid_from_geojson(geojson), None, None
+
+        result = await self._cached_get(f"centroid:{identifier}", fetch, policy)
+        return result.value if result.value is not None else (None, None)
 
     async def _get_warnung_catalogs(self) -> tuple[dict[str, dict], dict[str, dict]]:
         """Load and cache district and municipality catalogs from warnung.bund.de."""
@@ -1608,9 +1530,23 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             alert["affected_regions"] = details["affected_regions"]
 
     async def _fetch_warning_details(self, identifier: str) -> dict[str, str]:
-        """Fetch human-readable official warning details for a given identifier."""
+        """Fetch human-readable warning details (cached per warning id)."""
+        empty = {"description": "", "affected_regions": ""}
         safe_identifier = quote(identifier, safe="")
-        data = await fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.json")
+        url = f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.json"
+        policy = SourcePolicy(
+            min_interval=DETAIL_MIN_INTERVAL, max_stale=DETAIL_MAX_STALE, backoff_base=300
+        )
+
+        async def fetch(_etag, _last_modified):
+            return await self._download_warning_details(url), None, None
+
+        result = await self._cached_get(f"detail:{identifier}", fetch, policy)
+        return result.value if result.value is not None else empty
+
+    async def _download_warning_details(self, url: str) -> dict[str, str]:
+        """Download and parse the detail JSON of one warning."""
+        data = await fetch_json(self.hass, url)
         if not isinstance(data, dict):
             return {"description": "", "affected_regions": ""}
 
@@ -1818,9 +1754,12 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         return re.sub(r"[^a-z0-9]+", "", ascii_text.lower())
 
     def _is_in_germany(self, lat: float, lon: float) -> bool:
-        """Return whether a coordinate lies within a rough Germany bounding box."""
-        min_lon, max_lat, max_lon, min_lat = GERMANY_BBOX
-        return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
+        """Return whether a coordinate lies inside Germany (coarse outline).
+
+        The former bounding box also contained Basel, Salzburg, Prague and
+        Szczecin; ``geo.in_germany`` uses a polygon instead.
+        """
+        return geo.in_germany(lat, lon)
 
     def _is_within_radius(
         self,
@@ -1902,7 +1841,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         published = str(latest_geometry.get("date") or event.get("closed") or "")
         is_germany = self._is_in_germany(lat, lon)
         is_local = self._is_within_radius(home_center, lat, lon, radius_km)
-        if not is_germany and not is_local:
+        if not is_germany and not is_local and not geo.in_neighborhood(lat, lon):
             return None
 
         score = self._score_eonet_categories(category_titles)
@@ -1916,7 +1855,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             source="eonet",
             published=published,
             score=score,
-            region="de",
+            region="de" if is_germany or is_local else "world",
             latitude=lat,
             longitude=lon,
             severity=category_text or "Naturereignis",
@@ -2146,9 +2085,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 if home_lat is not None and home_lon is not None:
                     return float(home_lat), float(home_lon), "Lokale News am Home-Fokus"
 
-        for place, coords in NEWS_PLACE_COORDINATES.items():
-            if place in normalized_text:
-                return float(coords[0]), float(coords[1]), "News mit Ortsbezug"
+        match = geo.locate(str(item.get("title") or ""), str(item.get("summary") or ""))
+        if match is not None:
+            return match.lat, match.lon, match.label
 
         return None, None, ""
 

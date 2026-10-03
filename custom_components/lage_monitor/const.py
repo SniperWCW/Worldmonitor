@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "lage_monitor"
 FRONTEND_BASE_URL = f"/{DOMAIN}_frontend"
 CARD_FILENAME = "lage-monitor-card.js"
-CARD_RESOURCE_VERSION = "0.1.38"
+CARD_RESOURCE_VERSION = "0.1.39"
 CARD_RESOURCE_URL = f"{FRONTEND_BASE_URL}/{CARD_FILENAME}?v={CARD_RESOURCE_VERSION}"
 
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -45,6 +45,20 @@ DEFAULT_ALERT_RADIUS_KM = 50
 USGS_EARTHQUAKE_FEED_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
 EONET_EVENTS_API_URL = "https://eonet.gsfc.nasa.gov/api/v3/events"
 GERMANY_BBOX = (5.5, 55.2, 15.6, 47.0)
+
+# Fetch policies (seconds). A failed source serves its last good data for at
+# most ``max_stale`` seconds, flagged as stale, instead of reporting "calm".
+FEED_MIN_INTERVAL_NEWS = 540
+FEED_MIN_INTERVAL_POLICE = 240
+FEED_MAX_STALE = 3 * 3600
+ALERTS_MIN_INTERVAL = 120
+ALERTS_MAX_STALE = 30 * 60
+EVENTS_MIN_INTERVAL = 600
+EVENTS_MAX_STALE = 6 * 3600
+DETAIL_MIN_INTERVAL = 3600
+DETAIL_MAX_STALE = 24 * 3600
+FETCH_CONCURRENCY = 6
+UPDATE_FAILURES_BEFORE_UNAVAILABLE = 3
 
 ATTR_ALERTS = "alerts"
 ATTR_HEADLINES = "headlines"

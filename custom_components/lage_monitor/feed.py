@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 import html
 import logging
 import re
 from typing import Any
 import xml.etree.ElementTree as ET
 
-from aiohttp import ClientError
+from aiohttp import ClientTimeout
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .fetchcache import NotModified
+
 _LOGGER = logging.getLogger(__name__)
+
+REQUEST_TIMEOUT = ClientTimeout(total=20)
 
 TAG_RE = re.compile(r"<[^>]+>")
 WS_RE = re.compile(r"\s+")
@@ -108,29 +112,69 @@ def parse_rss(xml_text: str, source: str, limit: int) -> list[FeedItem]:
 async def fetch_json(hass, url: str) -> Any:
     """Fetch JSON data."""
     session = async_get_clientsession(hass)
-    async with session.get(url, timeout=20) as response:
+    async with session.get(url, timeout=REQUEST_TIMEOUT) as response:
         response.raise_for_status()
         return await response.json(content_type=None)
 
 
-async def fetch_feed(hass, url: str, source: str, limit: int) -> list[FeedItem]:
-    """Fetch and parse a feed."""
-    session = async_get_clientsession(hass)
-    try:
-        async with session.get(url, timeout=20) as response:
-            response.raise_for_status()
-            text = await response.text()
-    except (TimeoutError, ClientError, ET.ParseError) as err:
-        _LOGGER.warning("Could not fetch feed %s from %s: %s", source, url, err)
-        return []
+def _validator_headers(etag: str | None, last_modified: str | None) -> dict[str, str]:
+    """Build conditional-request headers from cached validators."""
+    headers: dict[str, str] = {}
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
+    return headers
 
-    try:
-        return parse_rss(text, source, limit)
-    except ET.ParseError as err:
-        _LOGGER.warning("Could not parse feed %s: %s", source, err)
-        return []
+
+async def fetch_feed(
+    hass,
+    url: str,
+    source: str,
+    limit: int,
+    etag: str | None = None,
+    last_modified: str | None = None,
+) -> tuple[list[FeedItem], str | None, str | None]:
+    """Fetch and parse a feed with conditional-request support.
+
+    Raises on any failure (network, HTTP status, XML) so the caller can
+    decide how to degrade. Raises ``NotModified`` on HTTP 304.
+    """
+    session = async_get_clientsession(hass)
+    async with session.get(
+        url,
+        headers=_validator_headers(etag, last_modified),
+        timeout=REQUEST_TIMEOUT,
+    ) as response:
+        if response.status == 304:
+            raise NotModified
+        response.raise_for_status()
+        text = await response.text()
+        new_etag = response.headers.get("ETag")
+        new_last_modified = response.headers.get("Last-Modified")
+    return parse_rss(text, source, limit), new_etag, new_last_modified
+
+
+async def fetch_json_conditional(
+    hass,
+    url: str,
+    etag: str | None = None,
+    last_modified: str | None = None,
+) -> tuple[Any, str | None, str | None]:
+    """Fetch JSON with conditional-request support (raises ``NotModified``)."""
+    session = async_get_clientsession(hass)
+    async with session.get(
+        url,
+        headers=_validator_headers(etag, last_modified),
+        timeout=REQUEST_TIMEOUT,
+    ) as response:
+        if response.status == 304:
+            raise NotModified
+        response.raise_for_status()
+        data = await response.json(content_type=None)
+        return data, response.headers.get("ETag"), response.headers.get("Last-Modified")
 
 
 def iso_timestamp() -> str:
     """Return UTC timestamp."""
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")

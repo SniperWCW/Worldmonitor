@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -80,6 +80,8 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
         self._attr_suggested_object_id = key
         if "score" in key or key == "stability_index":
             self._attr_native_unit_of_measurement = "/100"
+        if key != "diagnostic_state":
+            self._attr_state_class = SensorStateClass.MEASUREMENT
         if key in {"active_alerts", "police_items", "high_priority_items"}:
             self._attr_icon = "mdi:alert"
         else:
@@ -89,7 +91,10 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
     def native_value(self):
         """Return the state."""
         if self._key == "diagnostic_state":
-            return "degraded" if self.coordinator.data.diagnostics["degraded"] else "ok"
+            diagnostics = self.coordinator.data.diagnostics
+            if diagnostics.get("stale"):
+                return "stale"
+            return "degraded" if diagnostics["degraded"] else "ok"
         return getattr(self.coordinator.data, self._key)
 
     @property
