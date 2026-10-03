@@ -1,0 +1,87 @@
+"""Regression tests for regional aggregation and quality metadata."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import unittest
+
+try:
+    import test_coordinator_resilience as base
+except ImportError:
+    from tests import test_coordinator_resilience as base
+
+
+class CoordinatorScoringTests(unittest.TestCase):
+    def setUp(self):
+        self.c = base.make_coordinator()
+        self.now = datetime(2026, 10, 3, 12, tzinfo=timezone.utc)
+
+    def item(self, title, score, region, source="news", age_hours=0):
+        return {
+            "title": title,
+            "summary": "",
+            "score": score,
+            "region": region,
+            "source": source,
+            "published_dt": self.now - timedelta(hours=age_hours),
+            "keywords": [],
+            "military_score": 0,
+        }
+
+    def test_world_scope_excludes_domestic_items(self):
+        items = [
+            self.item("Deutsches Ereignis", 90, "de"),
+            self.item("Internationales Ereignis", 12, "world"),
+        ]
+        germany, world = self.c._split_scope_items(items)
+        self.assertEqual(["Deutsches Ereignis"], [item["title"] for item in germany])
+        self.assertEqual(["Internationales Ereignis"], [item["title"] for item in world])
+
+    def test_official_alert_is_not_double_counted_as_germany_news(self):
+        items = [self.item("Warnung", 20, "de", source="mowas")]
+        germany, _world = self.c._split_scope_items(items)
+        self.assertEqual([], germany)
+
+    def test_duplicate_headlines_do_not_raise_normalized_risk(self):
+        single = [self.item("Explosion in Chemiewerk", 20, "world")]
+        duplicates = single * 4
+        one = self.c._normalize_aggregate_risk(single, self.now, scale=60, cap=100)
+        many = self.c._normalize_aggregate_risk(duplicates, self.now, scale=60, cap=100)
+        self.assertEqual(one, many)
+
+    def test_old_event_has_less_weight(self):
+        fresh = [self.item("Sturm über Region", 20, "world")]
+        old = [self.item("Sturm über Region", 20, "world", age_hours=12)]
+        self.assertGreater(
+            self.c._normalize_aggregate_risk(fresh, self.now, scale=60, cap=100),
+            self.c._normalize_aggregate_risk(old, self.now, scale=60, cap=100),
+        )
+
+    def test_combined_risks_are_bounded_without_simple_addition(self):
+        self.assertEqual(44, self.c._combine_risks(20, 30))
+        self.assertEqual(100, self.c._combine_risks(100, 30))
+
+    def test_data_quality_is_separate_metadata(self):
+        status = {
+            "a": {"ok": True, "stale": False},
+            "b": {"ok": False, "stale": True},
+        }
+        freshness = [
+            {"label": "Frisch"},
+            {"label": "Cache (veraltet)"},
+        ]
+        quality = self.c._build_data_quality(
+            status,
+            freshness,
+            [self.item("DE", 10, "de", source="a")],
+            [],
+            [],
+        )
+        self.assertEqual(2, quality["total_sources"])
+        self.assertEqual(1, quality["healthy_sources"])
+        self.assertEqual(1, quality["stale_sources"])
+        self.assertLess(quality["score"], 80)
+
+
+if __name__ == "__main__":
+    unittest.main()

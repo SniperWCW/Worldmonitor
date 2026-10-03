@@ -74,11 +74,12 @@ from .const import (
 from . import geo
 from .feed import FeedItem, fetch_feed, fetch_json, fetch_json_conditional, iso_timestamp
 from .fetchcache import FetchResult, ResilientCache, SourcePolicy
-from .scoring import score_text
+from .scoring import aggregate_risk, baseline_deviation, score_text
 
 _LOGGER = logging.getLogger(__name__)
 COORD_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 OFFICIAL_ALERT_SOURCES = {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}
+SCORE_HISTORY_VERSION = 2
 @dataclass(slots=True)
 class LageSnapshot:
     """Current aggregated situation."""
@@ -115,8 +116,10 @@ class LageSnapshot:
     risk_drivers: list[dict]
     score_trend: dict[str, str | int]
     risk_components: dict[str, dict[str, int]]
-    history_summary: dict[str, dict[str, int | str | None]]
+    history_summary: dict[str, dict[str, Any]]
     source_freshness: list[dict[str, str | int | None | bool]]
+    data_quality: dict[str, Any]
+    theme_scores: dict[str, dict[str, dict[str, int]]]
 
 
 class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
@@ -197,7 +200,11 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Could not load Lage Monitor history: %s", err)
             return
-        entries = stored.get("entries", []) if isinstance(stored, dict) else []
+        if not isinstance(stored, dict) or stored.get("score_version") != SCORE_HISTORY_VERSION:
+            # v0.2.0 changed the score semantics. Mixing older samples into
+            # the new trend line would create a fictitious jump.
+            return
+        entries = stored.get("entries", [])
         loaded: list[dict[str, Any]] = []
         for item in entries:
             if not isinstance(item, dict):
@@ -220,6 +227,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     async def _async_save_history(self) -> None:
         """Persist current history window for restart-stable trends."""
         payload = {
+            "score_version": SCORE_HISTORY_VERSION,
             "entries": [
                 {
                     "ts": item["ts"].isoformat(),
@@ -352,43 +360,39 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         germany_headlines = self._build_germany_headlines(scored, local_keywords, news_limit)
         world_headlines = [item for item in scored if item.get("region") == "world"][:news_limit]
 
-        official_alert_risk = min(35, sum(self._score_official_alert(alert) for alert in alerts))
-        germany_police_risk = min(
-            20,
-            sum(
-                item["score"]
-                for item in scored
-                if item["region"] == "de" and item["source"] == "presseportal_blaulicht"
-            )
-            // 8,
+        now = dt_util.now()
+        official_alert_risk = self._normalize_aggregate_risk(
+            self._alerts_to_scored_items(alerts), now, scale=42.0, cap=45
         )
-        germany_news_risk = min(
-            20,
-            sum(
-                item["score"]
-                for item in scored
-                if item["region"] == "de"
-                and item["source"] not in OFFICIAL_ALERT_SOURCES
-                and item["source"] != "presseportal_blaulicht"
-            )
-            // 10,
+        germany_items, world_items = self._split_scope_items(scored)
+        germany_police_items = [
+            item for item in germany_items if item.get("source") == "presseportal_blaulicht"
+        ]
+        germany_news_items = [
+            item for item in germany_items if item.get("source") != "presseportal_blaulicht"
+        ]
+        germany_priority_items = [
+            item for item in germany_items if int(item.get("score") or 0) >= 12
+        ]
+        germany_police_risk = self._normalize_aggregate_risk(
+            germany_police_items, now, scale=55.0, cap=25
         )
-        germany_high_priority_risk = min(
-            15,
-            sum(
-                3
-                for item in scored
-                if item["region"] == "de"
-                and item["source"] not in OFFICIAL_ALERT_SOURCES
-                and int(item.get("score") or 0) >= 12
-            ),
+        germany_news_risk = self._normalize_aggregate_risk(
+            germany_news_items, now, scale=70.0, cap=45
         )
-        germany_risk_score = min(
-            100,
-            official_alert_risk + germany_police_risk + germany_news_risk + germany_high_priority_risk,
+        germany_high_priority_risk = self._normalize_aggregate_risk(
+            germany_priority_items, now, scale=55.0, cap=30
         )
-        global_risk_score = min(100, sum(item["score"] for item in scored[:10]) // 2)
-        local_risk_score = min(100, sum(int(item.get("score") or 0) for item in local_headlines[:8]) // 2)
+        germany_event_risk = self._normalize_aggregate_risk(
+            germany_items, now, scale=90.0, cap=78
+        )
+        germany_risk_score = self._combine_risks(official_alert_risk, germany_event_risk)
+        global_risk_score = self._normalize_aggregate_risk(
+            world_items, now, scale=95.0, cap=100
+        )
+        local_risk_score = self._normalize_aggregate_risk(
+            local_headlines, now, scale=52.0, cap=100
+        )
         high_priority = sum(1 for item in scored if item["score"] >= 12)
         police_raw_items = sum(1 for item in deduped if item.source == "presseportal_blaulicht")
         police_relevant_items = sum(
@@ -406,18 +410,12 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         military_signal_germany_risk = self._compute_military_signal(military_items_germany)
         military_signal_world_risk = self._compute_military_signal(military_items_world)
         military_signal_risk = max(military_signal_germany_risk, military_signal_world_risk)
-        stability_deduction = min(
-            100,
-            int(germany_risk_score * 0.5)
-            + int(global_risk_score * 0.15)
-            + min(high_priority * 2, 10)
-            + int(military_signal_germany_risk * 0.15)
-            + int(military_signal_world_risk * 0.1),
-        )
-        stability_index = max(0, 100 - stability_deduction)
         germany_score = 100 - germany_risk_score
         global_score = 100 - global_risk_score
         local_score = 100 - local_risk_score
+        # A transparent composite of the two independent scopes. Local is a
+        # subset of Germany and is intentionally not counted a second time.
+        stability_index = round(germany_score * 0.75 + global_score * 0.25)
         military_signal_germany = 100 - military_signal_germany_risk
         military_signal_world = 100 - military_signal_world_risk
         military_signal = 100 - military_signal_risk
@@ -462,14 +460,31 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 military_signal_germany_risk,
             ),
         }
+        theme_scores = {
+            "germany": self._build_theme_scores(germany_items, now),
+            "world": self._build_theme_scores(world_items, now),
+            "local": self._build_theme_scores(local_headlines, now),
+        }
         risk_drivers = self._build_risk_drivers(
             score_breakdown,
             germany_headlines,
             alerts,
-            military_signal_germany_risk,
-            military_signal_world_risk,
         )
         score_trend = self._build_score_trend(germany_score, stability_index)
+        source_freshness = self._build_source_freshness(scored, alerts, source_status)
+        data_quality = self._build_data_quality(
+            source_status,
+            source_freshness,
+            germany_items,
+            world_items,
+            local_headlines,
+        )
+        history_summary = self._build_history_summary(
+            germany_score,
+            global_score,
+            local_score,
+            stability_index,
+        )
         analysis_summary = self._build_analysis_summary(
             germany_score,
             global_score,
@@ -483,13 +498,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             world_headlines=world_headlines,
             local_headlines=local_headlines,
             alert_radius_km=alert_radius_km,
-        )
-        source_freshness = self._build_source_freshness(scored, alerts, source_status)
-        history_summary = self._build_history_summary(
-            germany_score,
-            global_score,
-            local_score,
-            stability_index,
+            history_summary=history_summary,
+            data_quality=data_quality,
         )
 
         keyword_counter: Counter[str] = Counter()
@@ -576,6 +586,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             risk_components=risk_components,
             history_summary=history_summary,
             source_freshness=source_freshness,
+            data_quality=data_quality,
+            theme_scores=theme_scores,
         )
 
     def _build_score_trend(self, germany_score: int, stability_index: int) -> dict[str, str | int]:
@@ -645,7 +657,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         global_score: int,
         local_score: int,
         stability_index: int,
-    ) -> dict[str, dict[str, int | str | None]]:
+    ) -> dict[str, dict[str, Any]]:
         """Build lightweight 24h and 7d trends from coordinator runtime history."""
         now = dt_util.now()
         self._score_history.append(
@@ -672,15 +684,35 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         key: str,
         current: int,
         now,
-    ) -> dict[str, int | str | None]:
+    ) -> dict[str, Any]:
         """Return current plus deltas to the closest 24h and 7d sample."""
+        past_scores = [
+            int(item[key])
+            for item in self._score_history[:-1]
+            if key in item
+        ]
+        baseline = baseline_deviation(
+            100 - current,
+            [100 - value for value in past_scores],
+        )
         return {
             "current": current,
             "delta_24h": self._delta_from_history(key, current, now - timedelta(hours=24)),
             "delta_7d": self._delta_from_history(key, current, now - timedelta(days=7)),
             "label_24h": self._delta_label(self._delta_from_history(key, current, now - timedelta(hours=24))),
             "label_7d": self._delta_label(self._delta_from_history(key, current, now - timedelta(days=7))),
+            "baseline": baseline,
+            "series": self._history_series(key, max_points=28),
         }
+
+    def _history_series(self, key: str, *, max_points: int) -> list[int]:
+        """Return an evenly sampled seven-day score series for sparklines."""
+        values = [int(item[key]) for item in self._score_history if key in item]
+        if len(values) <= max_points:
+            return values
+        step = (len(values) - 1) / (max_points - 1)
+        indexes = [round(index * step) for index in range(max_points)]
+        return [values[index] for index in indexes]
 
     async def _safe_fetch_public_event_items(
         self,
@@ -918,7 +950,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 elif age_minutes <= 120:
                     label = "Frisch"
                 elif age_minutes <= 720:
-                    label = "Verzoegert"
+                    label = "Verzögert"
                 else:
                     label = "Alt"
             freshness.append(
@@ -939,8 +971,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         score_breakdown: dict[str, int],
         germany_headlines: list[dict],
         alerts: list[dict],
-        military_signal_germany_risk: int,
-        military_signal_world_risk: int,
     ) -> list[dict]:
         """Return the strongest current score drivers in descending order."""
         drivers = [
@@ -968,18 +998,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 "value": int(score_breakdown.get("police_germany", 0)),
                 "detail": "Relevante Polizeimeldungen in Deutschland",
             },
-            {
-                "key": "military_world",
-                "label": "Militärsignal Welt",
-                "value": int(military_signal_world_risk),
-                "detail": "Globale militärische Aktivität",
-            },
-            {
-                "key": "military_germany",
-                "label": "Militärsignal Deutschland",
-                "value": int(military_signal_germany_risk),
-                "detail": "Militärische Signalbegriffe mit Deutschland-Bezug",
-            },
         ]
         ranked = [driver for driver in drivers if driver["value"] > 0]
         ranked.sort(key=lambda driver: int(driver["value"]), reverse=True)
@@ -999,6 +1017,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         world_headlines: list[dict],
         local_headlines: list[dict],
         alert_radius_km: int,
+        history_summary: dict[str, dict[str, Any]],
+        data_quality: dict[str, Any],
     ) -> dict[str, Any]:
         """Build concise Lagebewertungen for Germany, world, and Home radius."""
         top_driver = risk_drivers[0] if risk_drivers else None
@@ -1006,14 +1026,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         if germany_score <= 25:
             headline = "Deutschland aktuell klar angespannt."
         elif germany_score <= 45:
-            headline = "Deutschland aktuell spuerbar belastet."
+            headline = "Deutschland aktuell spürbar belastet."
         elif germany_score <= 65:
-            headline = "Deutschland aktuell erhoeht aufmerksam, aber nicht akut kritisch."
+            headline = "Deutschland aktuell erhöht aufmerksam, aber nicht akut kritisch."
 
         if stability_index <= 35:
-            headline += " Die Stabilitaet ist deutlich unter Normalniveau."
+            headline += " Die Stabilität ist deutlich unter Normalniveau."
         elif stability_index <= 55:
-            headline += " Die Stabilitaet bleibt fragil."
+            headline += " Die Stabilität bleibt fragil."
 
         if top_driver is None:
             drivers = "Aktuell fehlen dominante Risikotreiber in den Eingangsdaten."
@@ -1022,14 +1042,14 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             if germany_headlines:
                 top_title = str(germany_headlines[0].get("title") or "").strip()
                 if top_title:
-                    drivers += f" Praegendes Thema: {top_title}"
+                    drivers += f" Prägendes Thema: {top_title}"
 
         if active_alerts >= 10 and military_signal_germany >= 70:
-            outlook = "Amtliche Warnlagen sind vorhanden, waehrend das Militairsignal in Deutschland derzeit nicht zusaetzlich eskaliert."
+            outlook = "Amtliche Warnlagen sind vorhanden, während das Militärsignal in Deutschland derzeit nicht zusätzlich eskaliert."
         elif military_signal_germany < 50:
-            outlook = "Neben der Nachrichtenlage sollte besonders beobachtet werden, ob sich das Deutschland-bezogene Militairsignal weiter verschaerft."
+            outlook = "Neben der Nachrichtenlage sollte besonders beobachtet werden, ob sich das Deutschland-bezogene Militärsignal weiter verschärft."
         else:
-            outlook = "Entscheidend fuer die naechsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
+            outlook = "Entscheidend für die nächsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
 
         germany_summary = {
             "title": "Deutschland",
@@ -1040,13 +1060,35 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         world_summary = self._build_world_analysis_summary(global_score, military_signal_world, world_headlines)
         local_summary = self._build_local_analysis_summary(local_score, local_headlines, alert_radius_km, active_alerts)
 
+        summaries = {
+            "germany": germany_summary,
+            "world": world_summary,
+            "local": local_summary,
+        }
+        for key, summary in summaries.items():
+            history = history_summary.get(key, {})
+            changes: list[str] = []
+            delta = history.get("delta_24h")
+            if isinstance(delta, int):
+                if delta > 0:
+                    changes.append(f"Lagewert in 24 Stunden um {delta} Punkte verbessert.")
+                elif delta < 0:
+                    changes.append(f"Lagewert in 24 Stunden um {abs(delta)} Punkte verschlechtert.")
+                else:
+                    changes.append("Lagewert gegenüber vor 24 Stunden unverändert.")
+            baseline = history.get("baseline")
+            if isinstance(baseline, dict) and baseline.get("label"):
+                changes.append(f"Belastung {baseline['label']}.")
+            if not changes:
+                changes.append("Noch keine belastbare 24-Stunden-Vergleichsbasis vorhanden.")
+            summary["changes"] = changes[:2]
+            summary["confidence"] = data_quality.get("label", "niedrig")
+
         return {
             "headline": headline,
             "drivers": drivers,
             "outlook": outlook,
-            "germany": germany_summary,
-            "world": world_summary,
-            "local": local_summary,
+            **summaries,
         }
 
     def _build_world_analysis_summary(
@@ -1060,23 +1102,23 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         if global_score <= 25:
             headline = "Weltweit aktuell klar angespannt."
         elif global_score <= 45:
-            headline = "Weltweit aktuell spuerbar belastet."
+            headline = "Weltweit aktuell spürbar belastet."
         elif global_score <= 65:
-            headline = "Weltweit aktuell erhoeht aufmerksam."
+            headline = "Weltweit aktuell erhöht aufmerksam."
 
         if military_signal_world <= 45:
-            headline += " Das globale Militairsignal bleibt deutlich belastet."
+            headline += " Das globale Militärsignal bleibt deutlich belastet."
         elif military_signal_world <= 65:
-            headline += " Das globale Militairsignal verdient Beobachtung."
+            headline += " Das globale Militärsignal verdient Beobachtung."
 
         top_world = world_headlines[0] if world_headlines else None
         if top_world:
-            drivers = f"Praegend international: {top_world.get('title') or 'ohne Titel'}"
+            drivers = f"Prägend international: {top_world.get('title') or 'ohne Titel'}"
         else:
             drivers = "Aktuell fehlen dominante internationale Treiber in den Eingangsdaten."
 
         if len(world_headlines) >= 4:
-            outlook = "Massgeblich ist, ob mehrere internationale Konflikt- oder Krisenthemen parallel hoch bleiben."
+            outlook = "Maßgeblich ist, ob mehrere internationale Konflikt- oder Krisenthemen parallel hoch bleiben."
         else:
             outlook = "Entscheidend bleibt, ob einzelne Weltlagen in die Breite eskalieren oder wieder an Relevanz verlieren."
 
@@ -1099,15 +1141,15 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         if local_score <= 25:
             headline = "Im Umkreis aktuell klar angespannt."
         elif local_score <= 45:
-            headline = "Im Umkreis aktuell spuerbar belastet."
+            headline = "Im Umkreis aktuell spürbar belastet."
         elif local_score <= 65:
-            headline = "Im Umkreis aktuell erhoeht aufmerksam."
+            headline = "Im Umkreis aktuell erhöht aufmerksam."
 
         top_local = local_headlines[0] if local_headlines else None
         if top_local:
             source = str(top_local.get("source") or "").strip()
             source_label = f" ({source})" if source else ""
-            drivers = f"Praegend im Umkreis von {alert_radius_km} km: {top_local.get('title') or 'ohne Titel'}{source_label}"
+            drivers = f"Prägend im Umkreis von {alert_radius_km} km: {top_local.get('title') or 'ohne Titel'}{source_label}"
         elif active_alerts:
             drivers = f"Es liegen Warnungen vor, aktuell aber ohne dominante lokale Schwerpunktmeldung im Radius von {alert_radius_km} km."
         else:
@@ -1126,11 +1168,136 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         }
 
     def _compute_military_signal(self, items: list[dict]) -> int:
-        """Return a capped military risk score where higher means more critical."""
-        return min(
-            100,
-            len(items) * 7 + sum(int(item.get("military_score") or 0) for item in items) // 2,
+        """Return a deduplicated, time-weighted military risk score."""
+        military_items = [
+            {**item, "score": int(item.get("military_score") or 0)}
+            for item in items
+            if int(item.get("military_score") or 0) > 0
+        ]
+        return self._normalize_aggregate_risk(
+            military_items, dt_util.now(), scale=62.0, cap=100
         )
+
+    def _normalize_aggregate_risk(
+        self,
+        items: list[dict],
+        now,
+        *,
+        scale: float,
+        cap: int,
+    ) -> int:
+        """Map an unbounded aggregate to a stable 0..cap risk value.
+
+        ``aggregate_risk`` removes near-duplicates, rewards independent source
+        confirmation and decays old events. Exponential normalization avoids a
+        handful of ordinary headlines forcing a permanent 0/100 safety score.
+        """
+        if not items:
+            return 0
+        raw = aggregate_risk(items, now)
+        normalized = cap * (1.0 - math.exp(-max(0.0, raw) / max(1.0, scale)))
+        return min(cap, max(0, round(normalized)))
+
+    def _split_scope_items(self, items: list[dict]) -> tuple[list[dict], list[dict]]:
+        """Return independent Germany and world inputs for score aggregation."""
+        germany = [
+            item
+            for item in items
+            if item.get("region") == "de" and item.get("source") not in OFFICIAL_ALERT_SOURCES
+        ]
+        world = [item for item in items if item.get("region") == "world"]
+        return germany, world
+
+    def _combine_risks(self, *risks: int) -> int:
+        """Combine independent bounded risks without simply adding overlaps."""
+        remaining = 1.0
+        for risk in risks:
+            remaining *= 1.0 - min(100, max(0, int(risk))) / 100.0
+        return min(100, max(0, round((1.0 - remaining) * 100)))
+
+    def _build_theme_scores(self, items: list[dict], now) -> dict[str, dict[str, int]]:
+        """Build explainable thematic risk/safety scores for one scope."""
+        tokens = {
+            "security": (
+                "anschlag", "terror", "angriff", "gewalt", "amok", "geisel",
+                "schuesse", "schüsse", "messer", "explosion", "unruhen", "ausschreit",
+            ),
+            "infrastructure": (
+                "ausfall", "blackout", "strom", "energie", "wasser", "trinkwasser",
+                "bahn", "brücke", "bruecke", "verkehr", "netz", "internet", "versorgung",
+            ),
+            "nature": (
+                "erdbeben", "hochwasser", "überschwemm", "ueberschwemm", "sturm",
+                "orkan", "waldbrand", "wildfire", "hitz", "glatteis", "schnee", "vulkan",
+            ),
+        }
+        result: dict[str, dict[str, int]] = {}
+        for key, keywords in tokens.items():
+            matches = []
+            for item in items:
+                haystack = f"{item.get('title', '')} {item.get('summary', '')} {' '.join(item.get('keywords', []))}".lower()
+                if any(keyword in haystack for keyword in keywords):
+                    matches.append(item)
+            risk = self._normalize_aggregate_risk(matches, now, scale=48.0, cap=100)
+            result[key] = {"risk": risk, "score": 100 - risk, "events": len(matches)}
+
+        military_matches = [item for item in items if int(item.get("military_score") or 0) > 0]
+        military_risk = self._compute_military_signal(military_matches)
+        result["military"] = {
+            "risk": military_risk,
+            "score": 100 - military_risk,
+            "events": len(military_matches),
+        }
+        return result
+
+    def _build_data_quality(
+        self,
+        source_status: dict[str, dict],
+        freshness: list[dict],
+        germany_items: list[dict],
+        world_items: list[dict],
+        local_items: list[dict],
+    ) -> dict[str, Any]:
+        """Describe source health separately from the situation score."""
+        total = len(source_status)
+        healthy = sum(
+            1 for status in source_status.values()
+            if status.get("ok") is True and not status.get("stale")
+        )
+        stale = sum(1 for status in source_status.values() if status.get("stale"))
+        errors = sum(1 for status in source_status.values() if status.get("ok") is False)
+        current = sum(
+            1 for item in freshness
+            if str(item.get("label") or "").lower() in {"frisch", "keine zeitdaten"}
+        )
+        availability = healthy / total if total else 0.0
+        freshness_ratio = current / total if total else 0.0
+        all_sources = {
+            str(item.get("source") or "")
+            for item in (*germany_items, *world_items, *local_items)
+            if item.get("source")
+        }
+        diversity = min(1.0, len(all_sources) / 6.0)
+        score = round(100 * (availability * 0.55 + freshness_ratio * 0.25 + diversity * 0.20))
+        if score >= 80:
+            label = "hoch"
+        elif score >= 55:
+            label = "mittel"
+        else:
+            label = "niedrig"
+        return {
+            "score": score,
+            "label": label,
+            "healthy_sources": healthy,
+            "total_sources": total,
+            "stale_sources": stale,
+            "error_sources": errors,
+            "scope_sources": {
+                "germany": len({str(item.get("source") or "") for item in germany_items if item.get("source")}),
+                "world": len({str(item.get("source") or "") for item in world_items if item.get("source")}),
+                "local": len({str(item.get("source") or "") for item in local_items if item.get("source")}),
+            },
+        }
 
     async def _cached_get(self, key: str, fetch, policy: SourcePolicy) -> FetchResult:
         """Run a cached fetch with a global concurrency limit."""
@@ -1301,6 +1468,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "link": item.link,
             "summary": item.summary,
             "published": item.published,
+            "published_dt": self._parse_feed_datetime(item.published),
             "source": item.source,
             "score": result.score,
             "keywords": result.keywords,
@@ -1735,6 +1903,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             "link": link,
             "summary": summary,
             "published": published,
+            "published_dt": self._parse_feed_datetime(published),
             "source": source,
             "score": min(max(int(score), 0), 100),
             "keywords": keywords or [],
@@ -1929,7 +2098,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
     ) -> list[dict]:
         """Build map markers from local alerts plus geolocated news items."""
         markers: list[dict] = []
-        map_items = self._build_alert_map_items(alerts) + self._build_news_map_items(
+        map_items = self._build_alert_map_items(alerts, home_center, radius_km) + self._build_news_map_items(
             scored_items,
             home_center,
             local_keywords,
@@ -1953,6 +2122,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "source": str(item.get("source") or ""),
                     "severity": str(item.get("severity") or ""),
                     "link": str(item.get("link") or ""),
+                    "region": str(item.get("region") or "de"),
+                    "local": bool(item.get("local")),
                 }
                 for item in cluster_alerts[:5]
             ]
@@ -1970,6 +2141,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "count": len(cluster_alerts),
                     "titles": top_titles,
                     "items": cluster_items,
+                    "region": "world" if all(item.get("region") == "world" for item in cluster_alerts) else "de",
+                    "local": any(bool(item.get("local")) for item in cluster_alerts),
                 }
             )
 
@@ -1986,13 +2159,20 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "longitude": float(home_lon),
                     "count": 1,
                     "items": [],
+                    "region": "local",
+                    "local": True,
                 }
             )
 
         markers.sort(key=lambda item: (item.get("kind") == "home", item.get("count", 0)), reverse=True)
         return markers
 
-    def _build_alert_map_items(self, alerts: list[dict]) -> list[dict]:
+    def _build_alert_map_items(
+        self,
+        alerts: list[dict],
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> list[dict]:
         """Convert today's local alerts into map items."""
         items: list[dict] = []
         for alert in self._filter_alerts_for_today(alerts):
@@ -2008,6 +2188,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "link": str(alert.get("link") or ""),
                     "latitude": float(lat),
                     "longitude": float(lon),
+                    "region": "de",
+                    "local": self._is_within_radius(home_center, float(lat), float(lon), radius_km),
                 }
             )
         return items
@@ -2024,12 +2206,16 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         items: list[dict] = []
         home_lat, home_lon = home_center
         seen: set[str] = set()
+        scope_counts = {"de": 0, "world": 0}
 
         for item in scored_items:
             if item.get("source") in {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}:
                 continue
             score = int(item.get("score") or 0)
             if score < 8:
+                continue
+            region = "world" if item.get("region") == "world" else "de"
+            if scope_counts[region] >= 8:
                 continue
 
             lat, lon, severity = self._resolve_news_coordinates(item, local_keywords, home_center)
@@ -2056,9 +2242,12 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "link": str(item.get("link") or ""),
                     "latitude": lat,
                     "longitude": lon,
+                    "region": region,
+                    "local": self._is_within_radius(home_center, lat, lon, radius_km),
                 }
             )
-            if len(items) >= 8:
+            scope_counts[region] += 1
+            if all(count >= 8 for count in scope_counts.values()):
                 break
 
         return items
@@ -2127,6 +2316,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                     "link": alert.get("link") or "",
                     "summary": severity or f"{source} im Umkreis von Home",
                     "published": str(alert.get("sent") or ""),
+                    "published_dt": self._parse_feed_datetime(str(alert.get("sent") or "")),
                     "source": source,
                     "score": score,
                     "keywords": [],

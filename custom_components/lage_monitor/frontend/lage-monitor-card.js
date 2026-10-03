@@ -33,6 +33,9 @@ const CARD_STYLE = `
   ha-card {
     overflow: hidden;
     border-radius: 22px;
+    position: relative;
+    isolation: isolate;
+    contain: paint;
   }
   .shell {
     padding: 18px;
@@ -45,6 +48,222 @@ const CARD_STYLE = `
     display: block;
     margin-bottom: 16px;
     min-width: 0;
+  }
+  .hero-topline {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .updated {
+    color: var(--secondary-text-color);
+    font-size: 0.74rem;
+    white-space: nowrap;
+  }
+  .scope-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin: 16px 0 14px;
+    padding: 5px;
+    border-radius: 15px;
+    background: rgba(15, 23, 42, 0.07);
+  }
+  .scope-tab {
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 11px;
+    background: transparent;
+    color: var(--secondary-text-color);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .scope-tab.active {
+    color: var(--primary-text-color);
+    background: var(--ha-card-background, var(--card-background-color, #fff));
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+  }
+  .focus-summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 14px 18px;
+    align-items: center;
+  }
+  .focus-score {
+    min-width: 92px;
+    font-size: 2.35rem;
+    line-height: 1;
+    font-weight: 850;
+    letter-spacing: -0.05em;
+  }
+  .focus-score small {
+    display: block;
+    margin-top: 5px;
+    color: var(--secondary-text-color);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  .focus-score .score-denominator {
+    font-size: 0.9rem;
+    font-weight: 750;
+    letter-spacing: 0;
+  }
+  .focus-copy {
+    min-width: 0;
+  }
+  .focus-status {
+    font-size: 0.76rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .focus-headline {
+    margin-top: 5px;
+    font-size: 1.05rem;
+    font-weight: 750;
+    line-height: 1.35;
+  }
+  .focus-driver {
+    margin-top: 7px;
+    color: var(--secondary-text-color);
+    font-size: 0.84rem;
+    line-height: 1.4;
+  }
+  .sparkline-wrap {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+  }
+  .sparkline {
+    display: block;
+    width: 100%;
+    height: 42px;
+  }
+  .sparkline polyline {
+    fill: none;
+    stroke: var(--primary-color, #2563eb);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .trend-copy {
+    color: var(--secondary-text-color);
+    font-size: 0.75rem;
+    line-height: 1.35;
+    text-align: right;
+  }
+  .signal-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .signal-card {
+    min-width: 0;
+    padding: 10px 11px;
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.68);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+  }
+  .signal-label {
+    color: var(--secondary-text-color);
+    font-size: 0.68rem;
+    line-height: 1.2;
+  }
+  .signal-value {
+    margin-top: 4px;
+    font-size: 0.92rem;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+  .change-list {
+    display: grid;
+    gap: 7px;
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .change-list li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    color: var(--secondary-text-color);
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+  .change-list li::before {
+    content: "→";
+    color: var(--primary-color, #2563eb);
+    font-weight: 800;
+  }
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 9px;
+  }
+  .theme-card {
+    min-width: 0;
+    padding: 11px;
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+  }
+  .theme-name {
+    color: var(--secondary-text-color);
+    font-size: 0.72rem;
+  }
+  .theme-risk {
+    margin-top: 5px;
+    font-size: 1.15rem;
+    font-weight: 800;
+  }
+  .risk-track {
+    height: 4px;
+    margin-top: 8px;
+    overflow: hidden;
+    border-radius: 99px;
+    background: rgba(148, 163, 184, 0.2);
+  }
+  .risk-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #22c55e, #f59e0b 55%, #dc2626);
+  }
+  .quality-summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px 14px;
+    align-items: center;
+    margin-bottom: 12px;
+    padding: 12px;
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.95);
+  }
+  .quality-score {
+    font-size: 1.55rem;
+    font-weight: 850;
+  }
+  .quality-copy {
+    color: var(--secondary-text-color);
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+  .event-time {
+    color: var(--secondary-text-color);
+    font-size: 0.76rem;
+  }
+  .summary.clamped {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
   .hero-main {
     padding: 18px;
@@ -122,15 +341,21 @@ const CARD_STYLE = `
     font-weight: 800;
   }
   .score-value.state-good,
-  .metric-value.state-good {
+  .metric-value.state-good,
+  .focus-score.state-good,
+  .focus-status.state-good {
     color: #15803d;
   }
   .score-value.state-medium,
-  .metric-value.state-medium {
+  .metric-value.state-medium,
+  .focus-score.state-medium,
+  .focus-status.state-medium {
     color: #b45309;
   }
   .score-value.state-bad,
-  .metric-value.state-bad {
+  .metric-value.state-bad,
+  .focus-score.state-bad,
+  .focus-status.state-bad {
     color: #b91c1c;
   }
   .score-label {
@@ -300,6 +525,9 @@ const CARD_STYLE = `
     border: 1px solid rgba(148, 163, 184, 0.2);
     background: rgba(226, 232, 240, 0.65);
     position: relative;
+    isolation: isolate;
+    contain: paint;
+    z-index: 0;
   }
   .map-status {
     margin-top: 10px;
@@ -858,6 +1086,11 @@ const CARD_STYLE = `
     .score-value {
       font-size: 2.2rem;
     }
+    .score-grid,
+    .metric-grid,
+    .theme-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
     .score-card,
     .metric {
       padding: 12px;
@@ -903,6 +1136,17 @@ const CARD_STYLE = `
     .score-grid,
     .metric-grid {
       gap: 8px;
+    }
+    .focus-summary {
+      grid-template-columns: 78px minmax(0, 1fr);
+      gap: 12px;
+    }
+    .focus-score {
+      min-width: 0;
+      font-size: 1.95rem;
+    }
+    .signal-strip {
+      grid-template-columns: 1fr;
     }
     .panel {
       border-radius: 16px;
@@ -1051,6 +1295,9 @@ function getHomeCenter(hass) {
 }
 
 function toNumberOrNull(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -1068,8 +1315,8 @@ function resolveAlertCount(rawState, alertItems) {
 }
 
 function getScoreState(value, positiveHigh = false) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
+  const numeric = toNumberOrNull(value);
+  if (numeric === null) {
     return { className: "", label: "" };
   }
   if (positiveHigh) {
@@ -1091,8 +1338,8 @@ function getScoreState(value, positiveHigh = false) {
 }
 
 function getAssessmentStatus(score) {
-  const numeric = Number(score);
-  if (!Number.isFinite(numeric)) {
+  const numeric = toNumberOrNull(score);
+  if (numeric === null) {
     return { className: "", label: "Keine Einordnung" };
   }
   if (numeric >= 70) {
@@ -1134,9 +1381,9 @@ function renderHeroAssessment(score, trendLabel) {
 }
 
 function formatOutOfHundred(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return String(value ?? "-");
+  const numeric = toNumberOrNull(value);
+  if (numeric === null) {
+    return escapeHtml(value ?? "-");
   }
   return `${numeric}/100`;
 }
@@ -1161,15 +1408,15 @@ function renderMetric(title, value, options = {}) {
   const state = getScoreState(value, positiveHigh);
   return `
     <div class="metric">
-      <div class="metric-label">${title}</div>
-      <div class="metric-value ${state.className}">${showOutOfHundred ? formatOutOfHundred(value) : value}</div>
+      <div class="metric-label">${escapeHtml(title)}</div>
+      <div class="metric-value ${state.className}">${showOutOfHundred ? formatOutOfHundred(value) : escapeHtml(value)}</div>
     </div>
   `;
 }
 
 function formatDelta(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
+  const numeric = toNumberOrNull(value);
+  if (numeric === null) {
     return "Keine Daten";
   }
   if (numeric > 0) {
@@ -1194,7 +1441,7 @@ function getFreshnessClass(label) {
   if (normalized === "frisch") {
     return "fresh";
   }
-  if (normalized === "verzoegert") {
+  if (normalized === "verzoegert" || normalized === "verzögert") {
     return "delayed";
   }
   if (normalized === "alt") {
@@ -1266,6 +1513,8 @@ function buildMapPoints(markers, homeCenter) {
       kind: marker.kind || "cluster",
       titles: Array.isArray(marker.titles) ? marker.titles : [],
       items: Array.isArray(marker.items) ? marker.items : [],
+      region: marker.region || "de",
+      local: Boolean(marker.local),
       variant: marker.kind === "home" ? "secondary" : ""
     });
   }
@@ -1283,6 +1532,8 @@ function buildMapPoints(markers, homeCenter) {
       kind: "home",
       titles: [],
       items: [],
+      region: "local",
+      local: true,
       variant: "secondary"
     });
   }
@@ -1326,7 +1577,7 @@ function renderScoreCard(label, value, options = {}) {
 
 function renderAssessmentPanel(panelKey, regionLabel, score, summary, metaLabel, open = false) {
   const state = getAssessmentStatus(score);
-  const headline = escapeHtml(summary?.headline || "Keine aktuelle Lagebewertung verfuegbar.");
+  const headline = escapeHtml(summary?.headline || "Keine aktuelle Lagebewertung verfügbar.");
   const drivers = escapeHtml(summary?.drivers || "");
   const outlook = escapeHtml(summary?.outlook || "");
   const meta = escapeHtml(metaLabel || "KI-Einschaetzung");
@@ -1353,19 +1604,133 @@ function renderAssessmentPanel(panelKey, regionLabel, score, summary, metaLabel,
   `;
 }
 
+const SOURCE_LABELS = {
+  tagesschau_all: "Tagesschau",
+  tagesschau_inland: "Tagesschau Inland",
+  tagesschau_ausland: "Tagesschau Ausland",
+  ntv_top: "n-tv",
+  stern_politik: "Stern Politik",
+  welt_politik: "WELT Politik",
+  presseportal_blaulicht: "Presseportal Blaulicht",
+  presseportal_storys: "Presseportal",
+  mowas: "MoWaS",
+  biwapp: "BIWAPP",
+  katwarn: "KATWARN",
+  dwd: "DWD",
+  lhp: "Länderwarnsystem",
+  police: "Polizei",
+  usgs: "USGS",
+  eonet: "NASA EONET"
+};
+
+function formatSource(source) {
+  const raw = String(source || "Quelle");
+  if (SOURCE_LABELS[raw]) {
+    return SOURCE_LABELS[raw];
+  }
+  const custom = raw.match(/^custom_press_(\d+)$/);
+  if (custom) {
+    return `Eigene Pressequelle ${custom[1]}`;
+  }
+  return raw.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatPublished(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return new Intl.DateTimeFormat("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function renderSparkline(values) {
+  const series = Array.isArray(values)
+    ? values.map(Number).filter((value) => Number.isFinite(value)).slice(-28)
+    : [];
+  if (series.length < 2) {
+    return `<div class="empty">Trendlinie erscheint nach weiteren Messpunkten.</div>`;
+  }
+  const width = 240;
+  const height = 42;
+  const points = series.map((value, index) => {
+    const x = (index / Math.max(1, series.length - 1)) * width;
+    const y = height - (Math.min(100, Math.max(0, value)) / 100) * (height - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Verlauf der letzten sieben Tage"><polyline points="${points}"></polyline></svg>`;
+}
+
+function renderEventItem(item) {
+  const score = Number(item?.score);
+  const link = safeHttpLink(item?.link);
+  const title = escapeHtml(item?.title || "Meldung ohne Titel");
+  const published = formatPublished(item?.published);
+  const titleMarkup = link
+    ? `<a class="link" href="${escapeHtml(link)}" target="_blank" rel="noreferrer">${title}</a>`
+    : `<div class="link">${title}</div>`;
+  return `
+    <div class="item">
+      <div class="item-top">
+        ${Number.isFinite(score) ? `<span class="badge">${score}</span>` : ""}
+        <span class="source">${escapeHtml(formatSource(item?.source))}</span>
+        ${published ? `<span class="event-time">${escapeHtml(published)}</span>` : ""}
+      </div>
+      ${titleMarkup}
+      ${item?.summary ? `<div class="summary clamped">${escapeHtml(item.summary)}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderThemeGrid(themes) {
+  const labels = {
+    security: "Sicherheit",
+    infrastructure: "Infrastruktur",
+    nature: "Natur",
+    military: "Militär"
+  };
+  return `<div class="theme-grid">${Object.entries(labels).map(([key, label]) => {
+    const risk = Math.min(100, Math.max(0, Number(themes?.[key]?.risk) || 0));
+    const events = Number(themes?.[key]?.events) || 0;
+    return `
+      <div class="theme-card">
+        <div class="theme-name">${label}</div>
+        <div class="theme-risk">${risk}<small>/100</small></div>
+        <div class="risk-track"><div class="risk-fill" style="width:${risk}%"></div></div>
+        <div class="event-time">${events} Signal${events === 1 ? "" : "e"}</div>
+      </div>
+    `;
+  }).join("")}</div>`;
+}
+
+function filterMapPoints(points, focus) {
+  if (focus === "world") {
+    return points.filter((point) => point.kind !== "home" && point.region === "world");
+  }
+  if (focus === "local") {
+    return points.filter((point) => point.kind === "home" || point.local);
+  }
+  return points.filter((point) => point.kind === "home" || point.region !== "world");
+}
+
 class LageMonitorCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._panelState = {
-      germany_assessment: false,
-      world_assessment: false,
-      local_assessment: false,
-      headlines: false,
+      focus: "local",
+      map: false,
       alerts: false,
       military: false,
-      trends: false,
-      freshness: false
+      data: false
     };
     this._lastMarkup = "";
     this._lastMapSignature = "";
@@ -1398,47 +1763,77 @@ class LageMonitorCard extends HTMLElement {
     const stateObj = hass.states[config.entity];
     if (!stateObj) {
       this._teardownMap();
-      this.shadowRoot.innerHTML = `<style>${CARD_STYLE}</style><ha-card><div class="shell"><div class="empty">Entity ${config.entity} not found.</div></div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${CARD_STYLE}</style><ha-card><div class="shell"><div class="empty">Entity ${escapeHtml(config.entity)} wurde nicht gefunden.</div></div></ha-card>`;
       return;
     }
 
     const attrs = stateObj.attributes;
     const localHeadlines = (attrs.local_headlines || []).slice(0, config.limit);
     const germanyHeadlines = (attrs.germany_headlines || []).slice(0, config.limit);
+    const worldHeadlines = (attrs.world_headlines || []).slice(0, config.limit);
     const alertItems = attrs.alerts || [];
     const alerts = alertItems.slice(0, 10);
     const keywords = (attrs.top_keywords || []).slice(0, 6);
     const markers = attrs.map_markers || [];
-    const militaryItems = (attrs.military_items || []).slice(0, 10);
-    const militarySignalGermany = attrs.military_signal_germany ?? "-";
-    const militarySignalWorld = attrs.military_signal_world ?? "-";
     const analysisSummary = attrs.analysis_summary || {};
     const historySummary = attrs.history_summary || {};
     const sourceFreshness = (attrs.source_freshness || []).slice(0, 8);
-    const scoreTrend = attrs.score_trend || {};
-    const stability = hass.states[config.stability_entity]?.state ?? "-";
+    const dataQuality = attrs.data_quality || {};
+    const themeScores = attrs.theme_scores || {};
     const germanyScore = toNumberOrNull(stateObj.state);
     const globalScore = attrs.global_score ?? "-";
     const localScore = attrs.local_score ?? "-";
-    const germanySummary = getRegionSummary(analysisSummary, "germany");
-    const worldSummary = getRegionSummary(analysisSummary, "world");
-    const localSummary = getRegionSummary(analysisSummary, "local");
-    const germanyHistory = historySummary.germany || {};
-    const worldHistory = historySummary.world || {};
-    const localHistory = historySummary.local || {};
     const localRadiusKm = attrs.diagnostics?.alert_radius_km;
     const lastUpdate = formatLastUpdate(attrs.last_update);
     const activeAlerts = resolveAlertCount(hass.states[config.alerts_entity]?.state, alertItems);
     const homeCenter = getHomeCenter(hass);
-    const mapPoints = buildMapPoints(markers, homeCenter);
+    const allMapPoints = buildMapPoints(markers, homeCenter);
+    const focus = ["local", "germany", "world"].includes(this._panelState.focus)
+      ? this._panelState.focus
+      : "local";
+    const localLabel = Number.isFinite(Number(localRadiusKm)) ? `Umkreis ${localRadiusKm} km` : "Umkreis";
+    const focusConfig = {
+      local: {
+        label: localLabel,
+        score: localScore,
+        summary: getRegionSummary(analysisSummary, "local"),
+        history: historySummary.local || {},
+        headlines: localHeadlines,
+        themes: themeScores.local || {},
+        military: (attrs.military_items_germany || []).slice(0, 10)
+      },
+      germany: {
+        label: "Deutschland",
+        score: germanyScore,
+        summary: getRegionSummary(analysisSummary, "germany"),
+        history: historySummary.germany || {},
+        headlines: germanyHeadlines,
+        themes: themeScores.germany || {},
+        military: (attrs.military_items_germany || []).slice(0, 10)
+      },
+      world: {
+        label: "Welt",
+        score: globalScore,
+        summary: getRegionSummary(analysisSummary, "world"),
+        history: historySummary.world || {},
+        headlines: worldHeadlines,
+        themes: themeScores.world || {},
+        military: (attrs.military_items_world || []).slice(0, 10)
+      }
+    };
+    const current = focusConfig[focus];
+    const scoreState = getAssessmentStatus(current.score);
+    const changes = Array.isArray(current.summary?.changes) ? current.summary.changes : [];
+    const scopeSources = Number(dataQuality.scope_sources?.[focus]) || 0;
+    const delta24h = current.history?.label_24h || formatDelta(current.history?.delta_24h);
+    const mapPoints = filterMapPoints(allMapPoints, focus);
     const realMarkerCount = getRealMarkerCount(mapPoints);
     const mapStatus = realMarkerCount > 0
-      ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} aus aktuellen Warnungen und News mit Ortsbezug.`
-      : "Der Punkt zeigt aktuell nur die Home-Position als Fallback. Es liegen derzeit keine geokodierten Warnungen oder News mit Ortsbezug vor.";
-    const trendState = getTrendState(scoreTrend);
-    const localLabel = Number.isFinite(Number(localRadiusKm)) ? `Umkreis ${localRadiusKm} km` : "Umkreis";
-    const aggregateScore = getAggregateScore([germanyScore, globalScore, localScore]);
-    const overallTrendLabel = `Deutschland seit letztem Update: ${scoreTrend.label || "Keine Vergleichsdaten"}`;
+      ? `${realMarkerCount} Kartenpunkt${realMarkerCount === 1 ? "" : "e"} im gewählten Fokus.`
+      : "Für diesen Fokus liegen derzeit keine geokodierten Ereignisse vor.";
+    const qualityScore = Number.isFinite(Number(dataQuality.score)) ? Number(dataQuality.score) : null;
+    const qualityLabel = dataQuality.label ? String(dataQuality.label) : "unbekannt";
+    const shouldRenderMap = Boolean(config.show_map && this._panelState.map);
 
     const markup = `
       <style>${CARD_STYLE}</style>
@@ -1446,124 +1841,74 @@ class LageMonitorCard extends HTMLElement {
         <div class="shell">
           <div class="hero">
             <div class="hero-main">
-              <div class="title">${config.title}</div>
-              <div class="sub">Lageüberblick für Deutschland und relevante Ereignisse. 100 = grün = gut, 0 = rot = kritisch.</div>
-              <div class="score-grid">
-                ${renderScoreCard("Deutschland", germanyScore)}
-                ${renderScoreCard("Welt", globalScore)}
-                ${renderScoreCard(localLabel, localScore)}
+              <div class="hero-topline">
+                <div>
+                  <div class="title">${escapeHtml(config.title)}</div>
+                  <div class="sub">Automatische Lageeinschätzung · 100 = ruhig, 0 = kritisch</div>
+                </div>
+                <div class="updated">${escapeHtml(lastUpdate)}</div>
               </div>
-              <div class="metric-grid">
-                ${renderMetric("Warnungen", activeAlerts, { positiveHigh: false })}
-                ${renderMetric("Stabilität", stability, { positiveHigh: true, showOutOfHundred: true })}
-                ${renderMetric("Militär DE", militarySignalGermany, { positiveHigh: true, showOutOfHundred: true })}
-                ${renderMetric("Militär Welt", militarySignalWorld, { positiveHigh: true, showOutOfHundred: true })}
+              <div class="scope-tabs" role="tablist" aria-label="Lagefokus">
+                ${Object.entries(focusConfig).map(([key, item]) => `
+                  <button class="scope-tab ${focus === key ? "active" : ""}" type="button" role="tab" aria-selected="${focus === key ? "true" : "false"}" data-focus="${key}">${escapeHtml(item.label)}</button>
+                `).join("")}
               </div>
-              ${renderHeroAssessment(aggregateScore, overallTrendLabel)}
-              <div class="status-line">Zuletzt aktualisiert: ${lastUpdate}</div>
+              <div class="focus-summary">
+                <div class="focus-score ${scoreState.className}">${toNumberOrNull(current.score) !== null ? `${toNumberOrNull(current.score)}<span class="score-denominator">/100</span>` : escapeHtml(current.score ?? "–")}<small>Lagewert</small></div>
+                <div class="focus-copy">
+                  <div class="focus-status ${scoreState.className}">${escapeHtml(scoreState.label)}</div>
+                  <div class="focus-headline">${escapeHtml(current.summary?.headline || "Noch keine Lageeinschätzung verfügbar.")}</div>
+                  ${current.summary?.drivers ? `<div class="focus-driver">${escapeHtml(current.summary.drivers)}</div>` : ""}
+                </div>
+                <div class="sparkline-wrap">
+                  ${renderSparkline(current.history?.series)}
+                  <div class="trend-copy">24 h: ${escapeHtml(delta24h)}<br>7 Tage: ${escapeHtml(current.history?.label_7d || formatDelta(current.history?.delta_7d))}</div>
+                </div>
+              </div>
+              <div class="signal-strip">
+                <div class="signal-card"><div class="signal-label">Datenqualität</div><div class="signal-value">${qualityScore === null ? "–" : `${qualityScore}/100`} · ${escapeHtml(qualityLabel)}</div></div>
+                <div class="signal-card"><div class="signal-label">Quellen im Fokus</div><div class="signal-value">${scopeSources}</div></div>
+                <div class="signal-card"><div class="signal-label">Amtliche Warnungen</div><div class="signal-value">${activeAlerts}</div></div>
+              </div>
+              <ul class="change-list">
+                ${(changes.length ? changes : ["Noch keine belastbare Vergleichsbasis vorhanden."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+              </ul>
             </div>
           </div>
           <div class="grid">
             <div class="panel">
               <div class="panel-head">
-                <div class="panel-title">KI Lagebewertung</div>
-                <div class="panel-note">
-                  <span class="trend-pill ${trendState.className}">Deutschland-Trend: ${escapeHtml(scoreTrend.label || "Keine Vergleichsdaten")}</span>
-                </div>
+                <div class="panel-title">Themenbelastung · ${escapeHtml(current.label)}</div>
+                <div class="panel-note">0 = ruhig · 100 = hoch</div>
               </div>
               <div class="panel-body">
-                <div class="assessment-stack">
-                  ${renderAssessmentPanel(
-                    "germany_assessment",
-                    "Deutschland",
-                    germanyScore,
-                    germanySummary,
-                    getMetricDeltaLabel(germanyHistory),
-                    this._panelState.germany_assessment
-                  )}
-                  ${renderAssessmentPanel(
-                    "world_assessment",
-                    "Welt",
-                    globalScore,
-                    worldSummary,
-                    getMetricDeltaLabel(worldHistory),
-                    this._panelState.world_assessment
-                  )}
-                  ${renderAssessmentPanel(
-                    "local_assessment",
-                    localLabel,
-                    localScore,
-                    localSummary,
-                    getMetricDeltaLabel(localHistory),
-                    this._panelState.local_assessment
-                  )}
+                ${renderThemeGrid(current.themes)}
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Relevante Ereignisse</div>
+                <div class="panel-note">${current.headlines.length} Treffer</div>
+              </div>
+              <div class="panel-body">
+                <div class="items">
+                  ${current.headlines.length ? current.headlines.map(renderEventItem).join("") : `<div class="empty">Keine relevanten Ereignisse in diesem Fokus.</div>`}
                 </div>
               </div>
             </div>
-            ${renderCollapsiblePanel(
-              "freshness",
-              "Datenfrische",
-              `${sourceFreshness.length} Quellen`,
-              `
-                <div class="freshness-list">
-                  ${sourceFreshness.length ? sourceFreshness.map((item) => renderFreshnessItem(item)).join("") : `<div class="empty">Keine Quelleninformationen verfuegbar</div>`}
-                </div>
-              `,
-              this._panelState.freshness
-            )}
             ${config.show_map ? `
-              <div class="panel">
-                <div class="panel-head">
-                  <div class="panel-title">Lagekarte</div>
-                  <div class="panel-note">${realMarkerCount > 0 ? `${realMarkerCount} Marker` : "Fallback"}</div>
-                </div>
-                <div class="panel-body">
+              ${renderCollapsiblePanel(
+                "map",
+                `Lagekarte · ${escapeHtml(current.label)}`,
+                `${realMarkerCount} Marker`,
+                `
                   <div id="map" style="height:${Number(config.map_height) || 320}px; --lage-monitor-map-height:${Number(config.map_height) || 320}px"></div>
                   <div class="map-status">${mapStatus}</div>
                   <div class="map-selection" id="map-selection"></div>
-                </div>
-              </div>
+                `,
+                this._panelState.map
+              )}
             ` : ""}
-            ${renderCollapsiblePanel(
-              "headlines",
-              "Top-Ergebnisse",
-              `${localHeadlines.length + germanyHeadlines.length} Eintraege`,
-              `
-                <div class="split-grid">
-                  <div>
-                    <div class="split-section-title">Top Ergebnisse Lokal</div>
-                    <div class="items">
-                      ${localHeadlines.length ? localHeadlines.map((item) => `
-                        <div class="item">
-                          <div class="item-top">
-                            <span class="badge">${item.score}</span>
-                            <span class="source">${item.source}</span>
-                          </div>
-                          <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
-                          <div class="summary">${item.summary || ""}</div>
-                        </div>
-                      `).join("") : `<div class="empty">Keine lokalen Treffer verfügbar</div>`}
-                    </div>
-                  </div>
-                  <div>
-                    <div class="split-section-title">Top Ergebnisse deutschlandweit</div>
-                    <div class="items">
-                      ${germanyHeadlines.length ? germanyHeadlines.map((item) => `
-                        <div class="item">
-                          <div class="item-top">
-                            <span class="badge">${item.score}</span>
-                            <span class="source">${item.source}</span>
-                          </div>
-                          <a class="link" href="${item.link || "#"}" target="_blank" rel="noreferrer">${item.title}</a>
-                          <div class="summary">${item.summary || ""}</div>
-                        </div>
-                      `).join("") : `<div class="empty">Keine deutschlandweiten Treffer verfügbar</div>`}
-                    </div>
-                  </div>
-                </div>
-              `,
-              this._panelState.headlines
-            )}
             ${renderCollapsiblePanel(
               "alerts",
               "Amtliche Warnungen",
@@ -1587,41 +1932,45 @@ class LageMonitorCard extends HTMLElement {
             ${config.show_military ? `
               ${renderCollapsiblePanel(
                 "military",
-                "Militärische Aktivität",
-                `${militaryItems.length}`,
+                `Militärische Signale · ${escapeHtml(current.label)}`,
+                `${current.military.length}`,
                 `
                   <div class="items">
-                    ${militaryItems.length ? militaryItems.map((item) => `
-                      <div class="item">
-                        <div class="item-top">
-                          <span class="source">${item.source}</span>
-                        </div>
-                        <div class="link">${item.title}</div>
-                      </div>
-                    `).join("") : `<div class="empty">Noch keine militärischen Signalereignisse erkannt</div>`}
+                    ${current.military.length ? current.military.map(renderEventItem).join("") : `<div class="empty">Keine militärischen Signalereignisse in diesem Fokus.</div>`}
                   </div>
                 `,
                 this._panelState.military
               )}
             ` : ""}
-            ${config.show_keywords ? `
-              <div class="panel">
-                <div class="panel-head">
-                  <div class="panel-title">Schlüsselbegriffe</div>
+            ${renderCollapsiblePanel(
+              "data",
+              "Daten & Methodik",
+              `${sourceFreshness.length} Quellen`,
+              `
+                <div class="quality-summary">
+                  <div class="quality-score">${qualityScore === null ? "–" : `${qualityScore}/100`}</div>
+                  <div class="quality-copy">Datenqualität ${escapeHtml(qualityLabel)} · ${Number(dataQuality.healthy_sources) || 0} von ${Number(dataQuality.total_sources) || 0} Quellen verfügbar · ${Number(dataQuality.stale_sources) || 0} veraltet · ${Number(dataQuality.error_sources) || 0} mit Fehler</div>
                 </div>
-                <div class="panel-body">
+                <div class="freshness-list">
+                  ${sourceFreshness.length ? sourceFreshness.map(renderFreshnessItem).join("") : `<div class="empty">Keine Quelleninformationen verfügbar.</div>`}
+                </div>
+                ${config.show_keywords ? `
+                  <div class="split-section-title" style="margin-top:14px">Schlüsselbegriffe</div>
                   <div class="chips">
-                    ${keywords.length ? keywords.map((item) => `<span class="chip">${item.keyword} (${item.count})</span>`).join("") : `<span class="empty">Noch keine Schlagwörter</span>`}
+                    ${keywords.length ? keywords.map((item) => `<span class="chip">${escapeHtml(item.keyword)} (${Number(item.count) || 0})</span>`).join("") : `<span class="empty">Noch keine Schlüsselbegriffe.</span>`}
                   </div>
-                </div>
-              </div>
-            ` : ""}
+                ` : ""}
+                <div class="method-note" style="margin-top:14px">Die Lagewerte sind heuristische Orientierung, keine amtliche Gefahrenstufe. Ereignisse werden nach Ähnlichkeit zusammengeführt, nach Alter abgewertet und bei Bestätigung durch unabhängige Quellen moderat verstärkt. Themenwerte zeigen Belastung; der Lagewert zeigt Sicherheit.</div>
+              `,
+              this._panelState.data
+            )}
           </div>
         </div>
       </ha-card>
     `;
     const mapSignature = JSON.stringify({
       zoom: Number(config.zoom) || 6,
+      focus,
       homeCenter,
       points: mapPoints.map((point) => ({
         latitude: Number(point.latitude),
@@ -1644,12 +1993,15 @@ class LageMonitorCard extends HTMLElement {
       this.shadowRoot.innerHTML = markup;
       this._lastMarkup = markup;
       this._bindPanelToggles();
+      this._bindScopeTabs();
     }
 
-    if (config.show_map && (markupChanged || !this._map || this._lastMapSignature !== mapSignature)) {
-      this._renderMap(mapPoints, homeCenter, config.zoom);
+    if (shouldRenderMap && (markupChanged || !this._map || this._lastMapSignature !== mapSignature)) {
+      const mapCenter = focus === "world" ? [20, 0] : homeCenter;
+      const mapZoom = focus === "world" ? 2 : config.zoom;
+      this._renderMap(mapPoints, mapCenter, mapZoom);
       this._lastMapSignature = mapSignature;
-    } else if (config.show_map) {
+    } else if (shouldRenderMap) {
       this._refreshMapSize();
     } else {
       this._teardownMap();
@@ -1674,6 +2026,22 @@ class LageMonitorCard extends HTMLElement {
     });
   }
 
+  _bindScopeTabs() {
+    this.shadowRoot.querySelectorAll(".scope-tab").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        const focus = button.dataset.focus;
+        if (!["local", "germany", "world"].includes(focus) || focus === this._panelState.focus) {
+          return;
+        }
+        this._panelState.focus = focus;
+        this._selectedMapPointKey = "";
+        this._persistPanelState();
+        this.hass = this._hass;
+      });
+    });
+  }
+
   _setMapSelection(point, markerCount) {
     const selection = this.shadowRoot.getElementById("map-selection");
     if (!selection) {
@@ -1681,7 +2049,7 @@ class LageMonitorCard extends HTMLElement {
     }
     if (!point) {
       this._selectedMapPointKey = "";
-      selection.innerHTML = `<div class="empty">Keinen Kartenpunkt ausgewaehlt.</div>`;
+      selection.innerHTML = `<div class="empty">Keinen Kartenpunkt ausgewählt.</div>`;
       return;
     }
 
@@ -1777,7 +2145,7 @@ class LageMonitorCard extends HTMLElement {
             fillOpacity: 0.96
           }).addTo(this._mapMarkersLayer).bindPopup(`
             <strong>Home</strong><br>
-            ${point.severity || "Home Assistant Fokus"}
+            ${escapeHtml(point.severity || "Home Assistant Fokus")}
           `);
           marker.on("click", () => this._setMapSelection(point, getRealMarkerCount(points)));
           if (point.key === this._selectedMapPointKey) {
@@ -1930,7 +2298,7 @@ class LageMonitorCardEditor extends HTMLElement {
           <div class="editor-title">Karte</div>
           <div class="editor-grid single">
             ${this._field("zoom", "Karten-Zoom", config.zoom, "number")}
-            ${this._field("map_height", "Kartenhoehe", config.map_height, "number")}
+            ${this._field("map_height", "Kartenhöhe", config.map_height, "number")}
           </div>
           <div class="editor-toggle-grid">
             ${this._toggle("show_map", "Karte anzeigen", config.show_map)}
@@ -1939,8 +2307,8 @@ class LageMonitorCardEditor extends HTMLElement {
           </div>
         </div>
         <div class="editor-section">
-          <div class="editor-title">Entitaeten</div>
-          <div class="editor-help">Normalerweise musst du hier nichts aendern. Die Karte erkennt deutsche und englische Standard-Entity-IDs automatisch.</div>
+          <div class="editor-title">Entitäten</div>
+          <div class="editor-help">Normalerweise musst du hier nichts ändern. Die Karte erkennt deutsche und englische Standard-Entity-IDs automatisch.</div>
           <div class="editor-grid single">
             ${this._field("entity", "Score-Entity", config.entity || "")}
             ${this._field("alerts_entity", "Alerts-Entity", config.alerts_entity || "")}
@@ -1960,7 +2328,7 @@ class LageMonitorCardEditor extends HTMLElement {
     return `
       <label class="editor-row">
         <span class="editor-label">${label}</span>
-        <input data-key="${key}" type="${type}" value="${value ?? ""}">
+        <input data-key="${escapeHtml(key)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? "")}">
       </label>
     `;
   }

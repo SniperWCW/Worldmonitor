@@ -2,7 +2,7 @@
 
 Custom Home Assistant integration plus Lovelace card for a German and global situation overview.
 
-## What this MVP does
+## What it does
 
 - Pulls official warning data from the BBK NINA API
 - Pulls Presseportal RSS feeds, including Blaulicht/Police
@@ -11,10 +11,11 @@ Custom Home Assistant integration plus Lovelace card for a German and global sit
   - n-tv
   - stern
   - WELT
-- Renders geocoded warning markers on an OpenStreetMap-based card map when coordinates are available
-- Exposes a first military activity signal and a derived stability index
-- Builds a simple severity heuristic for unrest, attacks, warnings, outages, and public-safety events
-- Exposes Home Assistant sensors and a custom dashboard card
+- Renders focus-aware local, German, and global map layers with geocoded warnings and news
+- Exposes military signals, thematic risk values, source quality, trends, and a derived stability index
+- De-duplicates similar stories, applies time decay, and moderately rewards independent confirmation
+- Separates the situation score from confidence in the available source data
+- Provides a mobile-first dashboard card with focus tabs, sparklines, and progressive disclosure
 
 ## Included sensors
 
@@ -42,6 +43,10 @@ The richest attributes live on the Germany score entity:
 - `diagnostics`
 - `score_breakdown`
 - `top_keywords`
+- `data_quality`
+- `theme_scores`
+- `history_summary`
+- `source_freshness`
 
 ## Important note about "unrest" and "attacks"
 
@@ -55,6 +60,15 @@ The current risk score is based on:
 - news headlines
 - keyword weighting
 - a separate military keyword signal derived from news content
+- source-aware near-duplicate clustering and age-based decay
+
+The card uses two deliberately different scales:
+
+- **Situation score:** 100 means calm, 0 means critical.
+- **Theme risk:** 0 means no current signal, 100 means high current burden.
+
+`data_quality` is shown separately. A calm score with weak or stale source coverage
+must not be read as confirmation that nothing is happening.
 
 That is useful for awareness and automation, but it is **not** a substitute for police, civil protection, or intelligence systems.
 
@@ -128,10 +142,10 @@ military_entity: sensor.military_signal_score
 
 ## Recommended next steps
 
-1. Add optional international event feeds like ACLED, GDELT, and USGS
-2. Add configurable keyword profiles for terrorism, civil unrest, infrastructure, and weather
-3. Add geo-filtering for Germany states or local radius
-4. Add OpenSky-backed air activity when you want real movement data instead of keyword-only military signals
-5. Add push automations when the score or keyword profile crosses a threshold
+1. Add optional conflict feeds such as ACLED or UCDP
+2. Add NASA FIRMS for fire and heat anomalies
+3. Add OpenSky-backed air activity when real movement data is desired
+4. Add configurable alert automations for thresholds and trend changes
+5. Add optional generated briefings only when explicitly enabled
 
 See also `ROADMAP.md` for the current project roadmap and planned intelligence features.

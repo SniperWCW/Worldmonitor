@@ -1,43 +1,45 @@
 # Lage Monitor Roadmap
 
-Stand: 2026-07-26
+Stand: 2026-10-03
 
 ## Bereits umgesetzt
 
-- Weichere Deutschland-Score-Aggregation mit getrennten Teilrisiken fuer Warnungen, News und Polizeidruck
-- Mobile Layout-Optimierungen fuer die Lovelace-Karte
-- Textbasierte Lagebewertung direkt aus den vorhandenen Signalen
+- Regionsgetrennte, deduplizierte und zeitgewichtete Scores für Umkreis, Deutschland und Welt
+- Mobile Fokusnavigation statt einer langen gleichzeitigen Vollansicht
+- Automatische regelbasierte Lageeinschätzung direkt aus den vorhandenen Signalen
 - Sichtbare Top-Treiber des Deutschland-Scores
-- Trendanzeige gegenueber dem letzten erfolgreichen Update
+- Persistente 24-Stunden- und 7-Tage-Trends mit Sparklines und Normalniveau-Vergleich
+- Getrennte Datenqualitäts- und Quellenfrischeanzeige
+- Themenbelastung für Sicherheit, Infrastruktur, Natur und Militär
+- Fokusabhängige Lagekarte mit begrenztem Leaflet-Stacking-Context
+- Konsequente HTML- und URL-Absicherung externer Feedinhalte
 - Korrigierte Integrationsmetadaten und Codeowner
 
-## Als naechstes sinnvoll
+## Als Nächstes sinnvoll
 
-1. Historische Snapshot-Speicherung fuer 24h- und 7d-Trends statt nur Vergleich zum letzten Update
-2. Eigene Themenbloecke fuer Terror/Gewalt, Infrastruktur, Wetter/Natur, Energie und Militaer
-3. Optionaler Morning-Briefing- und Evening-Briefing-Sensor mit laengerer Lageeinschaetzung
-4. Explizite Methodik-Anzeige in der Karte: welche Gewichtung zaehlt wie stark
-5. Bedienbare Fokus-Module fuer Deutschland, lokale Region und ausgewaehlte Krisenraeume
+1. Konfigurierbare Schwellen und Themenprofile
+2. Optionaler Morning-Briefing- und Evening-Briefing-Sensor
+3. Ausgewählte Krisenräume als zusätzliche gespeicherte Fokusansichten
+4. Benachrichtigungen bei belastbaren Trendwechseln
+5. Kalibrierung der Themenwerte anhand längerer realer Verlaufsdaten
 
 ## Erweiterungen mit neuen Datenquellen
 
-1. USGS fuer Erdbeben
-2. NASA FIRMS fuer Feuer/Waermeanomalien
-3. OpenSky fuer Luftlage und moegliche Airspace-Disruption-Signale
-4. ACLED oder UCDP fuer internationale Konfliktimpulse
-5. FRED oder andere Makrodaten fuer Energie-, Markt- und Versorgungsstress
+1. NASA FIRMS für Feuer/Wärmeanomalien
+2. OpenSky für Luftlage und mögliche Airspace-Disruption-Signale
+3. ACLED oder UCDP für internationale Konfliktimpulse
+4. Makrodaten für Energie-, Markt- und Versorgungsstress
 
 ## KI-/Analyseausbau
 
-1. Optionaler LLM-Modus fuer ausfuehrlichere Lagebewertung
-2. Unsicherheits- oder Vertrauensindikator fuer die textliche Einschaetzung
-3. Automatische Gegenueberstellung: Was belastet, was entlastet
-4. Handlungshinweise fuer Beobachtung in den naechsten 6 bis 12 Stunden
+1. Optionaler LLM-Modus für ausführlichere Lagebewertungen
+2. Quellenübergreifende Widerspruchserkennung
+3. Automatische Gegenüberstellung: Was belastet, was entlastet
+4. Handlungshinweise für Beobachtung in den nächsten 6 bis 12 Stunden
 
 ## Produkt-/UX-Ausbau
 
-1. Kompakte "Warum ist der Score so?"-Ansicht mit Drilldown
-2. Eigene Krisen-Tracker-Panels fuer feste Konfliktbereiche
-3. Bessere Historienvisualisierung mit Sparkline oder Mini-Chart
-4. Filter und Toggles fuer Warnungen, News-Kategorien und Prioritaetsprofile
-5. Push-Automationen fuer Schwellen, Trendwechsel und Eskalationen
+1. Drilldown bis auf den Beitrag einzelner Ereigniscluster
+2. Eigene Krisen-Tracker-Panels für feste Konfliktbereiche
+3. Filter für Warnungen, Kategorien und Prioritätsprofile
+4. Push-Automationen für Schwellen, Trendwechsel und Eskalationen

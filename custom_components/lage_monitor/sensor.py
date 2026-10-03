@@ -12,6 +12,7 @@ from .const import (
     ATTR_ANALYSIS_SUMMARY,
     ATTR_ALERTS,
     ATTR_DIAGNOSTICS,
+    ATTR_DATA_QUALITY,
     ATTR_GERMANY_HEADLINES,
     ATTR_GERMANY_RISK_SCORE,
     ATTR_GLOBAL_SCORE,
@@ -36,6 +37,7 @@ from .const import (
     ATTR_SOURCE_STATUS,
     ATTR_SOURCES,
     ATTR_TOP_KEYWORDS,
+    ATTR_THEME_SCORES,
     ATTR_WORLD_HEADLINES,
     DOMAIN,
 )
@@ -128,6 +130,7 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
             ATTR_MILITARY_SIGNAL_WORLD: self.coordinator.data.military_signal_world,
             ATTR_SOURCE_STATUS: self.coordinator.data.source_status,
             ATTR_SOURCE_FRESHNESS: self.coordinator.data.source_freshness,
+            ATTR_DATA_QUALITY: self.coordinator.data.data_quality,
             ATTR_DIAGNOSTICS: self.coordinator.data.diagnostics,
             ATTR_SOURCES: self.coordinator.data.sources,
             ATTR_LAST_UPDATE: self.coordinator.data.last_update,
@@ -137,4 +140,5 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
             ATTR_RISK_COMPONENTS: self.coordinator.data.risk_components,
             ATTR_HISTORY_SUMMARY: self.coordinator.data.history_summary,
             ATTR_TOP_KEYWORDS: self.coordinator.data.top_keywords,
+            ATTR_THEME_SCORES: self.coordinator.data.theme_scores,
         }
