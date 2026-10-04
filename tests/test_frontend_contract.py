@@ -26,6 +26,17 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("isolation: isolate;", self.source)
         self.assertIn("contain: paint;", self.source)
 
+    def test_map_tiles_send_referrer_and_use_complete_attribution(self):
+        self.assertIn('referrerPolicy: "origin"', self.source)
+        self.assertIn("OpenStreetMap contributors", self.source)
+        self.assertNotIn('L.tileLayer("https://tile.openstreetmap.org', self.source)
+
+    def test_map_provider_is_configurable_and_errors_are_handled(self):
+        self.assertIn('tile_url: DEFAULT_TILE_URL', self.source)
+        self.assertIn('this._field("tile_url", "XYZ-Kachel-URL"', self.source)
+        self.assertIn('this._mapLayer.on("tileerror"', self.source)
+        self.assertIn('errorTileUrl: L.Util.emptyImageUrl', self.source)
+
     def test_external_event_fields_are_not_inserted_raw(self):
         self.assertNotIn("${item.title}", self.source)
         self.assertNotIn('href="${item.link', self.source)

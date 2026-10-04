@@ -1,6 +1,9 @@
 const LEAFLET_JS = "/lage_monitor_frontend/vendor/leaflet.js";
 const LEAFLET_CSS = "/lage_monitor_frontend/vendor/leaflet.css";
 const DEFAULT_CENTER = [51.1657, 10.4515];
+const DEFAULT_TILE_URL = "https://tile.openstreetmap.de/{z}/{x}/{y}.png";
+const DEFAULT_TILE_ATTRIBUTION = "© OpenStreetMap contributors";
+const DEFAULT_TILE_ATTRIBUTION_HTML = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
 const ENTITY_CANDIDATES = {
   entity: ["sensor.germany_score", "sensor.deutschland_lage_score"],
   alerts_entity: ["sensor.active_alerts", "sensor.aktive_warnungen"],
@@ -16,6 +19,8 @@ const DEFAULT_CONFIG = {
   limit: 5,
   zoom: 6,
   map_height: 320,
+  tile_url: DEFAULT_TILE_URL,
+  tile_attribution: DEFAULT_TILE_ATTRIBUTION,
   show_map: true,
   show_keywords: true,
   show_military: true
@@ -934,6 +939,28 @@ const CARD_STYLE = `
     font: inherit;
     background: rgba(226, 232, 240, 0.65);
   }
+  .map-shell {
+    position: relative;
+  }
+  .map-provider-error {
+    position: absolute;
+    z-index: 1100;
+    top: 10px;
+    left: 52px;
+    right: 10px;
+    padding: 8px 10px;
+    border: 1px solid rgba(185, 28, 28, 0.28);
+    border-radius: 10px;
+    background: rgba(254, 242, 242, 0.96);
+    color: #991b1b;
+    font-size: 0.76rem;
+    font-weight: 700;
+    line-height: 1.35;
+    pointer-events: none;
+  }
+  .map-provider-error[hidden] {
+    display: none;
+  }
   .leaflet-pane,
   .leaflet-tile,
   .leaflet-marker-icon,
@@ -1576,6 +1603,20 @@ function safeHttpLink(value) {
   return /^https?:\/\//i.test(link) ? link : "";
 }
 
+function safeTileUrl(value) {
+  const url = String(value ?? "").trim();
+  const validProtocol = /^(https?:\/\/|\/)/i.test(url);
+  const hasTemplate = ["{z}", "{x}", "{y}"].every((token) => url.includes(token));
+  return validProtocol && hasTemplate ? url : DEFAULT_TILE_URL;
+}
+
+function tileAttribution(value) {
+  const text = String(value ?? "").trim() || DEFAULT_TILE_ATTRIBUTION;
+  return text === DEFAULT_TILE_ATTRIBUTION
+    ? DEFAULT_TILE_ATTRIBUTION_HTML
+    : escapeHtml(text);
+}
+
 function buildMapPoints(markers, homeCenter) {
   const points = [];
   for (const marker of markers) {
@@ -1846,6 +1887,9 @@ class LageMonitorCard extends HTMLElement {
     this._mapMarkersLayer = null;
     this._mapResizeObserver = null;
     this._mapHost = null;
+    this._mapTileSignature = "";
+    this._tileErrorCount = 0;
+    this._tileLoadCount = 0;
     this._mapRenderToken = 0;
     this._selectedMapPointKey = "";
   }
@@ -2039,7 +2083,10 @@ class LageMonitorCard extends HTMLElement {
                 `Lagekarte · ${escapeHtml(current.label)}`,
                 `${realMarkerCount} Marker`,
                 `
-                  <div id="map" style="height:${Number(config.map_height) || 320}px; --lage-monitor-map-height:${Number(config.map_height) || 320}px"></div>
+                  <div class="map-shell">
+                    <div id="map" style="height:${Number(config.map_height) || 320}px; --lage-monitor-map-height:${Number(config.map_height) || 320}px"></div>
+                    <div class="map-provider-error" id="map-provider-error" hidden>Kartenanbieter weist Kacheln ab. Marker und Ereignisdaten bleiben verfügbar.</div>
+                  </div>
                   <div class="map-status">${mapStatus}</div>
                   <div class="map-selection" id="map-selection"></div>
                 `,
@@ -2107,6 +2154,8 @@ class LageMonitorCard extends HTMLElement {
     `;
     const mapSignature = JSON.stringify({
       zoom: Number(config.zoom) || 6,
+      tileUrl: safeTileUrl(config.tile_url),
+      tileAttribution: String(config.tile_attribution || DEFAULT_TILE_ATTRIBUTION),
       focus,
       theme: activeTheme,
       homeCenter,
@@ -2140,7 +2189,10 @@ class LageMonitorCard extends HTMLElement {
     if (shouldRenderMap && (markupChanged || !this._map || this._lastMapSignature !== mapSignature)) {
       const mapCenter = focus === "world" ? [20, 0] : homeCenter;
       const mapZoom = focus === "world" ? 2 : config.zoom;
-      this._renderMap(mapPoints, mapCenter, mapZoom);
+      this._renderMap(mapPoints, mapCenter, mapZoom, {
+        url: safeTileUrl(config.tile_url),
+        attribution: tileAttribution(config.tile_attribution)
+      });
       this._lastMapSignature = mapSignature;
     } else if (shouldRenderMap) {
       this._refreshMapSize();
@@ -2247,8 +2299,9 @@ class LageMonitorCard extends HTMLElement {
     `;
   }
 
-  async _renderMap(points, homeCenter, zoom) {
+  async _renderMap(points, homeCenter, zoom, tileConfig = {}) {
     const mapRoot = this.shadowRoot.getElementById("map");
+    const providerError = this.shadowRoot.getElementById("map-provider-error");
     if (!mapRoot) {
       this._teardownMap();
       return;
@@ -2271,10 +2324,6 @@ class LageMonitorCard extends HTMLElement {
           scrollWheelZoom: false
         });
         this._mapHost = mapRoot;
-        this._mapLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-          maxZoom: 18
-        }).addTo(this._map);
         this._mapMarkersLayer = L.layerGroup().addTo(this._map);
 
         if (typeof ResizeObserver !== "undefined") {
@@ -2283,6 +2332,42 @@ class LageMonitorCard extends HTMLElement {
           });
           this._mapResizeObserver.observe(mapRoot);
         }
+      }
+
+      const tileUrl = safeTileUrl(tileConfig.url);
+      const attribution = tileConfig.attribution || DEFAULT_TILE_ATTRIBUTION_HTML;
+      const tileSignature = JSON.stringify({ tileUrl, attribution });
+      if (!this._mapLayer || this._mapTileSignature !== tileSignature) {
+        if (this._mapLayer) {
+          this._map.removeLayer(this._mapLayer);
+        }
+        this._tileErrorCount = 0;
+        this._tileLoadCount = 0;
+        if (providerError) {
+          providerError.hidden = true;
+        }
+        this._mapLayer = L.tileLayer(tileUrl, {
+          attribution,
+          errorTileUrl: L.Util.emptyImageUrl,
+          keepBuffer: 1,
+          maxZoom: 18,
+          referrerPolicy: "origin",
+          updateWhenIdle: true
+        });
+        this._mapLayer.on("tileerror", () => {
+          this._tileErrorCount += 1;
+          if (providerError && this._tileErrorCount >= 2 && this._tileLoadCount === 0) {
+            providerError.hidden = false;
+          }
+        });
+        this._mapLayer.on("tileload", () => {
+          this._tileLoadCount += 1;
+          if (providerError && this._tileErrorCount < 2) {
+            providerError.hidden = true;
+          }
+        });
+        this._mapLayer.addTo(this._map);
+        this._mapTileSignature = tileSignature;
       }
 
       if (!this._mapMarkersLayer) {
@@ -2386,6 +2471,9 @@ class LageMonitorCard extends HTMLElement {
     this._mapLayer = null;
     this._mapMarkersLayer = null;
     this._mapHost = null;
+    this._mapTileSignature = "";
+    this._tileErrorCount = 0;
+    this._tileLoadCount = 0;
   }
 
   _refreshMapSize() {
@@ -2464,9 +2552,12 @@ class LageMonitorCardEditor extends HTMLElement {
         </div>
         <div class="editor-section">
           <div class="editor-title">Karte</div>
+          <div class="editor-help">Standardmäßig wird der für kleinere Webanwendungen freigegebene deutsche OSM-Kartenserver verwendet. Eigene XYZ-Kachelquellen benötigen die Platzhalter {z}, {x} und {y}.</div>
           <div class="editor-grid single">
             ${this._field("zoom", "Karten-Zoom", config.zoom, "number")}
             ${this._field("map_height", "Kartenhöhe", config.map_height, "number")}
+            ${this._field("tile_url", "XYZ-Kachel-URL", config.tile_url || DEFAULT_TILE_URL)}
+            ${this._field("tile_attribution", "Karten-Attribution", config.tile_attribution || DEFAULT_TILE_ATTRIBUTION)}
           </div>
           <div class="editor-toggle-grid">
             ${this._toggle("show_map", "Karte anzeigen", config.show_map)}

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.3 - 2026-10-04
+
+### Changed
+
+- Switched the default raster background from the blocked OSM Foundation endpoint to the German OSM tile service, which permits smaller non-commercial web applications under its usage policy.
+- Added configurable XYZ tile URL and plain-text attribution fields to the Lovelace card editor.
+
+### Fixed
+
+- Tile requests now explicitly send an origin referrer and display the complete OpenStreetMap contributor attribution.
+- Rejected tile responses are replaced with a neutral background and a compact provider warning instead of rendering the upstream 403 image.
+
 ## 0.2.2 - 2026-10-04
 
 ### Fixed

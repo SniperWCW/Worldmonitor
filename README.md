@@ -89,6 +89,7 @@ Official / primary:
 Additional context for future map and conflict layers:
 
 - OpenStreetMap tile policy: https://operations.osmfoundation.org/policies/tiles/
+- OpenStreetMap.de German tile service: https://www.openstreetmap.de/germanstyle/
 - OpenSky data overview: https://opensky-network.org/data
 - UCDP API: https://ucdp.uu.se/apidocs/
 
@@ -134,6 +135,8 @@ title: Lage Monitor
 limit: 5
 zoom: 6
 map_height: 320
+tile_url: https://tile.openstreetmap.de/{z}/{x}/{y}.png
+tile_attribution: © OpenStreetMap contributors
 show_map: true
 show_keywords: true
 show_military: true
@@ -142,6 +145,11 @@ alerts_entity: sensor.active_alerts
 stability_entity: sensor.stability_index
 military_entity: sensor.military_signal_score
 ```
+
+`tile_url` accepts HTTPS/HTTP or same-origin XYZ templates containing `{z}`, `{x}`, and `{y}`.
+When another provider is configured, its required attribution must be entered in
+`tile_attribution`. The card sends an origin referrer and otherwise relies on normal browser
+caching; offline downloads or tile prefetching are not implemented.
 
 ## Recommended next steps
 
