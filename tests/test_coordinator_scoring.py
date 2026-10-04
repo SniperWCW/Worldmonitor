@@ -108,6 +108,71 @@ class CoordinatorScoringTests(unittest.TestCase):
         )
         self.assertIn("infrastructure", item["themes"])
 
+    def test_local_radius_excludes_remote_mowas_even_with_keyword_hit(self):
+        remote = {
+            "title": "MoWaS-Warnung für Stuttgart und Umgebung",
+            "source": "mowas",
+            "latitude": 48.603,
+            "longitude": 11.625,
+        }
+        filtered = self.c._filter_alerts_by_radius(
+            [remote],
+            (48.7758, 9.1829),
+            25,
+            "local",
+            ["Stuttgart"],
+        )
+        self.assertEqual([], filtered)
+
+    def test_local_radius_keeps_nearby_mowas(self):
+        nearby = {
+            "title": "MoWaS-Warnung im Stadtgebiet",
+            "source": "mowas",
+            "latitude": 48.80,
+            "longitude": 9.20,
+        }
+        filtered = self.c._filter_alerts_by_radius(
+            [nearby],
+            (48.7758, 9.1829),
+            25,
+            "local",
+        )
+        self.assertEqual([nearby], filtered)
+
+    def test_alert_text_is_only_fallback_without_coordinates(self):
+        unresolved = {
+            "title": "Abkochgebot",
+            "source": "mowas",
+            "affected_regions": "Stuttgart-Mitte",
+            "latitude": None,
+            "longitude": None,
+        }
+        filtered = self.c._filter_alerts_by_radius(
+            [unresolved],
+            (48.7758, 9.1829),
+            25,
+            "local",
+            ["Stuttgart"],
+        )
+        self.assertEqual([unresolved], filtered)
+
+    def test_local_headlines_do_not_override_remote_coordinates(self):
+        remote = {
+            "title": "Abkochgebot für Stuttgart",
+            "source": "mowas",
+            "severity": "Warnung",
+            "latitude": 48.603,
+            "longitude": 11.625,
+        }
+        selected = self.c._select_local_alerts_for_headlines(
+            [remote],
+            ["Stuttgart"],
+            (48.7758, 9.1829),
+            25,
+            "local",
+        )
+        self.assertEqual([], selected)
+
 
 if __name__ == "__main__":
     unittest.main()

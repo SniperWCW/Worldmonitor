@@ -79,7 +79,7 @@ from .scoring import aggregate_risk, baseline_deviation, cluster_items, score_te
 _LOGGER = logging.getLogger(__name__)
 COORD_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 OFFICIAL_ALERT_SOURCES = {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}
-SCORE_HISTORY_VERSION = 3
+SCORE_HISTORY_VERSION = 4
 THEME_KEYWORDS: dict[str, tuple[str, ...]] = {
     "security": (
         "anschlag", "terror", "angriff", "gewalt", "amok", "geisel",
@@ -229,7 +229,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             _LOGGER.warning("Could not load Lage Monitor history: %s", err)
             return
         if not isinstance(stored, dict) or stored.get("score_version") != SCORE_HISTORY_VERSION:
-            # v0.2.1 changed the relevance floor. Mixing older samples into
+            # Score semantics can change between releases. Mixing old samples into
             # the new trend line would create a fictitious jump.
             return
         entries = stored.get("entries", [])
@@ -332,12 +332,15 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 service_filter,
             )
             all_official_alerts = official_alerts
-            if focus_mode == FOCUS_MODE_LOCAL and resolved_warn_area is not None:
-                alerts.extend(official_alerts)
-            else:
-                alerts.extend(
-                    self._filter_alerts_by_radius(official_alerts, home_center, alert_radius_km, focus_mode)
+            alerts.extend(
+                self._filter_alerts_by_radius(
+                    official_alerts,
+                    home_center,
+                    alert_radius_km,
+                    focus_mode,
+                    local_keywords,
                 )
+            )
             source_status["warnung_bund"] = official_status
 
         feed_limit = self._feed_fetch_limit(news_limit)
@@ -599,8 +602,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             local_headlines=local_headlines,
             germany_headlines=germany_headlines,
             world_headlines=world_headlines,
-            alerts=alerts[: min(len(alerts), 15)],
-            local_alerts=local_alerts[: min(len(local_alerts), 15)],
+            alerts=self._public_alerts(alerts[: min(len(alerts), 15)]),
+            local_alerts=self._public_alerts(local_alerts[: min(len(local_alerts), 15)]),
             map_markers=map_markers,
             military_items=military_items,
             military_items_germany=military_items_germany,
@@ -1477,21 +1480,30 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         resolved = [alert for alert in unique.values() if self._is_service_enabled(alert, service_filter)]
         if resolved:
             await self._enrich_official_alert_details(resolved[:15])
-        missing_geo = [
-            alert
-            for alert in resolved
-            if alert.get("latitude") is None and alert.get("longitude") is None
-        ]
-        centroids = await asyncio.gather(
-            *(self._fetch_warning_centroid(alert.get("id")) for alert in missing_geo)
+        geometry_alerts = [alert for alert in resolved if alert.get("id")]
+        geometries = await asyncio.gather(
+            *(self._fetch_warning_geometry(alert.get("id")) for alert in geometry_alerts)
         )
-        for alert, (lat, lon) in zip(missing_geo, centroids, strict=True):
-            alert["latitude"] = lat
-            alert["longitude"] = lon
+        for alert, geometry in zip(geometry_alerts, geometries, strict=True):
+            lat = geometry.get("latitude")
+            lon = geometry.get("longitude")
+            if lat is not None and lon is not None:
+                alert["latitude"] = lat
+                alert["longitude"] = lon
+            polygons = geometry.get("polygons")
+            points = geometry.get("points")
+            if polygons:
+                alert["_geometry_polygons"] = polygons
+                alert["geo_precision"] = "warning_area"
+            elif points:
+                alert["_geometry_points"] = points
+                alert["geo_precision"] = "exact_point"
+            elif alert.get("latitude") is not None and alert.get("longitude") is not None:
+                alert["geo_precision"] = "reported_point"
 
         valid_ids = {str(alert.get("id")) for alert in resolved if alert.get("id")}
         self._cache.prune({f"detail:{i}" for i in valid_ids}, prefix="detail:")
-        self._cache.prune({f"centroid:{i}" for i in valid_ids}, prefix="centroid:")
+        self._cache.prune({f"geometry:{i}" for i in valid_ids}, prefix="geometry:")
 
         return resolved
 
@@ -1566,10 +1578,10 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         scored_item["themes"] = self._classify_item_themes(scored_item)
         return scored_item
 
-    async def _fetch_warning_centroid(self, identifier: str | None) -> tuple[float | None, float | None]:
-        """Fetch warning geometry (cached per warning id) and return a centroid."""
+    async def _fetch_warning_geometry(self, identifier: str | None) -> dict[str, Any]:
+        """Fetch and parse warning geometry, cached per warning id."""
         if not identifier:
-            return None, None
+            return {}
         safe_identifier = quote(str(identifier), safe="")
         url = f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.geojson"
         policy = SourcePolicy(
@@ -1578,10 +1590,15 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
 
         async def fetch(_etag, _last_modified):
             geojson = await fetch_json(self.hass, url)
-            return self._centroid_from_geojson(geojson), None, None
+            return self._geometry_context_from_geojson(geojson), None, None
 
-        result = await self._cached_get(f"centroid:{identifier}", fetch, policy)
-        return result.value if result.value is not None else (None, None)
+        result = await self._cached_get(f"geometry:{identifier}", fetch, policy)
+        return result.value if isinstance(result.value, dict) else {}
+
+    async def _fetch_warning_centroid(self, identifier: str | None) -> tuple[float | None, float | None]:
+        """Compatibility wrapper returning the area-weighted warning centroid."""
+        geometry = await self._fetch_warning_geometry(identifier)
+        return geometry.get("latitude"), geometry.get("longitude")
 
     async def _get_warnung_catalogs(self) -> tuple[dict[str, dict], dict[str, dict]]:
         """Load and cache district and municipality catalogs from warnung.bund.de."""
@@ -1908,7 +1925,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         ):
             lat = self._to_float_or_none(value.get(lat_key))
             lon = self._to_float_or_none(value.get(lon_key))
-            if lat is not None and lon is not None:
+            if self._valid_lat_lon(lat, lon):
                 return lat, lon
 
         coords = value.get("coordinate") or value.get("coordinates")
@@ -1917,16 +1934,32 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             if len(parts) >= 2:
                 lat = self._to_float_or_none(parts[0])
                 lon = self._to_float_or_none(parts[1])
-                if lat is not None and lon is not None:
+                if self._valid_lat_lon(lat, lon):
                     return lat, lon
         if isinstance(coords, list) and len(coords) >= 2:
             first = self._to_float_or_none(coords[0])
             second = self._to_float_or_none(coords[1])
             if first is not None and second is not None:
-                if abs(first) <= 90 and abs(second) <= 180:
-                    return first, second
-                if abs(first) <= 180 and abs(second) <= 90:
+                geojson_type = str(value.get("type") or "").lower()
+                if geojson_type in {
+                    "point",
+                    "multipoint",
+                    "linestring",
+                    "multilinestring",
+                    "polygon",
+                    "multipolygon",
+                    "geometrycollection",
+                } and self._valid_lat_lon(second, first):
+                    # RFC 7946 fixes GeoJSON positions to longitude, latitude.
                     return second, first
+                if 5 <= first <= 16 and 47 <= second <= 56:
+                    # Unlabelled German coordinate pairs are commonly lon/lat.
+                    return second, first
+                if 47 <= first <= 56 and 5 <= second <= 16:
+                    return first, second
+                if self._valid_lat_lon(first, second):
+                    # Preserve CAP-style latitude,longitude as the generic fallback.
+                    return first, second
 
         return None, None
 
@@ -1957,6 +1990,10 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             except ValueError:
                 return None
         return None
+
+    def _valid_lat_lon(self, lat: float | None, lon: float | None) -> bool:
+        """Return whether a complete coordinate pair is within global bounds."""
+        return lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180
 
     def _timestamp_from_epoch_ms(self, value) -> str:
         """Convert a Unix epoch in milliseconds to an ISO timestamp."""
@@ -2122,7 +2159,13 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         """Return a representative coordinate for an EONET geometry object."""
         if not isinstance(geometry, dict):
             return None, None
-        geojson = {"features": [{"geometry": {"coordinates": geometry.get("coordinates")}}]}
+        geojson = {
+            "type": "Feature",
+            "geometry": {
+                "type": geometry.get("type"),
+                "coordinates": geometry.get("coordinates"),
+            },
+        }
         return self._centroid_from_geojson(geojson)
 
     def _score_eonet_categories(self, categories: list[str]) -> int:
@@ -2137,25 +2180,153 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         return 8
 
     def _centroid_from_geojson(self, geojson: dict) -> tuple[float | None, float | None]:
-        """Compute a simple centroid from GeoJSON geometry."""
-        features = geojson.get("features")
-        if not isinstance(features, list) or not features:
+        """Compute an area-weighted representative point from GeoJSON."""
+        context = self._geometry_context_from_geojson(geojson)
+        return context.get("latitude"), context.get("longitude")
+
+    def _geometry_context_from_geojson(self, geojson: object) -> dict[str, Any]:
+        """Parse RFC 7946 geometry and retain areas for precise radius checks."""
+        polygons: list[list[list[list[float]]]] = []
+        points: list[list[float]] = []
+
+        def position(raw: object) -> list[float] | None:
+            if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+                return None
+            lon = self._to_float_or_none(raw[0])
+            lat = self._to_float_or_none(raw[1])
+            if not self._valid_lat_lon(lat, lon):
+                return None
+            return [float(lat), float(lon)]
+
+        def ring(raw: object) -> list[list[float]]:
+            if not isinstance(raw, list):
+                return []
+            return [parsed for item in raw if (parsed := position(item)) is not None]
+
+        def polygon(raw: object) -> list[list[list[float]]]:
+            if not isinstance(raw, list):
+                return []
+            parsed_rings = [parsed for item in raw if len(parsed := ring(item)) >= 3]
+            return parsed_rings
+
+        def walk(node: object) -> None:
+            if not isinstance(node, dict):
+                return
+            kind = str(node.get("type") or "").lower()
+            if kind == "featurecollection":
+                for feature in node.get("features") or []:
+                    walk(feature)
+                return
+            if kind == "feature":
+                walk(node.get("geometry"))
+                return
+            if kind == "geometrycollection":
+                for geometry in node.get("geometries") or []:
+                    walk(geometry)
+                return
+
+            coordinates = node.get("coordinates")
+            if kind == "polygon":
+                parsed = polygon(coordinates)
+                if parsed:
+                    polygons.append(parsed)
+                return
+            if kind == "multipolygon" and isinstance(coordinates, list):
+                for raw_polygon in coordinates:
+                    parsed = polygon(raw_polygon)
+                    if parsed:
+                        polygons.append(parsed)
+                return
+            if kind == "point":
+                parsed = position(coordinates)
+                if parsed:
+                    points.append(parsed)
+                return
+            if kind in {"multipoint", "linestring"} and isinstance(coordinates, list):
+                points.extend(parsed for item in coordinates if (parsed := position(item)) is not None)
+                return
+            if kind == "multilinestring" and isinstance(coordinates, list):
+                for line in coordinates:
+                    if isinstance(line, list):
+                        points.extend(parsed for item in line if (parsed := position(item)) is not None)
+                return
+
+            # Some upstream event feeds omit the geometry type. Keep a safe point fallback.
+            points.extend(
+                [
+                    [lat, lon]
+                    for lon, lat in self._flatten_coordinates(coordinates)
+                    if self._valid_lat_lon(lat, lon)
+                ]
+            )
+
+        walk(geojson)
+        latitude, longitude = self._area_weighted_centroid(polygons)
+        if latitude is None or longitude is None:
+            all_points = points or [
+                point
+                for polygon_item in polygons
+                for ring_item in polygon_item
+                for point in ring_item
+            ]
+            if all_points:
+                latitude = sum(point[0] for point in all_points) / len(all_points)
+                longitude = sum(point[1] for point in all_points) / len(all_points)
+
+        context: dict[str, Any] = {}
+        if latitude is not None and longitude is not None:
+            context["latitude"] = round(latitude, 6)
+            context["longitude"] = round(longitude, 6)
+        if polygons:
+            context["polygons"] = polygons
+        elif points:
+            context["points"] = points
+        return context
+
+    def _area_weighted_centroid(
+        self, polygons: list[list[list[list[float]]]]
+    ) -> tuple[float | None, float | None]:
+        """Return polygon centroid while subtracting holes and weighting parts by area."""
+        weighted_lat = 0.0
+        weighted_lon = 0.0
+        total_area = 0.0
+        for polygon in polygons:
+            for index, ring in enumerate(polygon):
+                centroid_lat, centroid_lon, area = self._ring_centroid(ring)
+                if centroid_lat is None or centroid_lon is None or area <= 0:
+                    continue
+                weight = area if index == 0 else -area
+                weighted_lat += centroid_lat * weight
+                weighted_lon += centroid_lon * weight
+                total_area += weight
+        if total_area <= 1e-12:
             return None, None
+        return weighted_lat / total_area, weighted_lon / total_area
 
-        all_points: list[tuple[float, float]] = []
-        for feature in features:
-            geometry = feature.get("geometry", {}) if isinstance(feature, dict) else {}
-            coords = geometry.get("coordinates")
-            if not coords:
-                continue
-            all_points.extend(self._flatten_coordinates(coords))
-
-        if not all_points:
-            return None, None
-
-        avg_lon = sum(point[0] for point in all_points) / len(all_points)
-        avg_lat = sum(point[1] for point in all_points) / len(all_points)
-        return round(avg_lat, 6), round(avg_lon, 6)
+    def _ring_centroid(
+        self, ring: list[list[float]]
+    ) -> tuple[float | None, float | None, float]:
+        """Return planar centroid and absolute area for one lat/lon ring."""
+        if len(ring) < 3:
+            return None, None, 0.0
+        cross_sum = 0.0
+        centroid_lon_sum = 0.0
+        centroid_lat_sum = 0.0
+        for index, current in enumerate(ring):
+            following = ring[(index + 1) % len(ring)]
+            current_lat, current_lon = current
+            next_lat, next_lon = following
+            cross = current_lon * next_lat - next_lon * current_lat
+            cross_sum += cross
+            centroid_lon_sum += (current_lon + next_lon) * cross
+            centroid_lat_sum += (current_lat + next_lat) * cross
+        if abs(cross_sum) <= 1e-12:
+            return None, None, 0.0
+        return (
+            centroid_lat_sum / (3 * cross_sum),
+            centroid_lon_sum / (3 * cross_sum),
+            abs(cross_sum) / 2,
+        )
 
     def _flatten_coordinates(self, coords) -> list[tuple[float, float]]:
         """Flatten GeoJSON coordinate arrays to lon/lat tuples."""
@@ -2275,6 +2446,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             lon = alert.get("longitude")
             if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
                 continue
+            distance = self._alert_distance_km(alert, home_center)
             item = {
                 "title": str(alert.get("title") or "Warnung"),
                 "source": str(alert.get("source") or ""),
@@ -2283,7 +2455,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 "latitude": float(lat),
                 "longitude": float(lon),
                 "region": "de",
-                "local": self._is_within_radius(home_center, float(lat), float(lon), radius_km),
+                "local": distance is not None and distance <= radius_km,
             }
             item["themes"] = self._classify_item_themes({
                 "title": item["title"],
@@ -2542,26 +2714,22 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         radius_km: int,
         focus_mode: str,
     ) -> list[dict]:
-        """Prefer locally relevant alerts for the local headline list."""
+        """Select local alerts, preferring warning geometry over text matches."""
         local_alerts: list[dict] = []
-        home_lat, home_lon = home_center
         for alert in alerts:
-            title = str(alert.get("title") or "")
-            severity = str(alert.get("severity") or "")
-            haystack = f"{title} {severity}".lower()
-            if any(keyword.lower() in haystack for keyword in local_keywords):
-                local_alerts.append(alert)
+            distance = self._alert_distance_km(alert, home_center)
+            if distance is not None:
+                alert["distance_km"] = round(distance, 1)
+                if distance <= radius_km:
+                    local_alerts.append(alert)
+                # Known remote geometry must not be overridden by a text hit.
                 continue
 
-            lat = alert.get("latitude")
-            lon = alert.get("longitude")
-            if (
-                home_lat is not None
-                and home_lon is not None
-                and isinstance(lat, (int, float))
-                and isinstance(lon, (int, float))
-                and self._haversine_km(home_lat, home_lon, float(lat), float(lon)) <= radius_km
-            ):
+            haystack = " ".join(
+                str(alert.get(field) or "")
+                for field in ("title", "severity", "affected_regions", "description")
+            ).lower()
+            if any(keyword.lower() in haystack for keyword in local_keywords):
                 local_alerts.append(alert)
 
         return local_alerts
@@ -2658,25 +2826,146 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         home_center: tuple[float | None, float | None],
         radius_km: int,
         focus_mode: str,
+        local_keywords: list[str] | None = None,
     ) -> list[dict]:
-        """Filter geocoded alerts around home when local mode is enabled."""
+        """Filter official alerts around Home when local mode is enabled."""
         if focus_mode != FOCUS_MODE_LOCAL:
             return alerts
 
-        home_lat, home_lon = home_center
-        if home_lat is None or home_lon is None:
-            return alerts
+        keywords = local_keywords or []
 
         filtered: list[dict] = []
         for alert in alerts:
-            lat = alert.get("latitude")
-            lon = alert.get("longitude")
-            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
-                filtered.append(alert)
+            distance = self._alert_distance_km(alert, home_center)
+            if distance is None:
+                haystack = " ".join(
+                    str(alert.get(field) or "")
+                    for field in ("title", "severity", "affected_regions", "description")
+                ).lower()
+                if any(keyword.lower() in haystack for keyword in keywords):
+                    filtered.append(alert)
                 continue
-            if self._haversine_km(home_lat, home_lon, float(lat), float(lon)) <= radius_km:
+            alert["distance_km"] = round(distance, 1)
+            if distance <= radius_km:
                 filtered.append(alert)
         return filtered
+
+    def _alert_distance_km(
+        self,
+        alert: dict,
+        home_center: tuple[float | None, float | None],
+    ) -> float | None:
+        """Return distance from Home to the warning area, point, or centroid."""
+        home_lat, home_lon = home_center
+        if not self._valid_lat_lon(home_lat, home_lon):
+            return None
+
+        polygons = alert.get("_geometry_polygons")
+        if isinstance(polygons, list) and polygons:
+            distances: list[float] = []
+            for polygon in polygons:
+                if not isinstance(polygon, list) or not polygon:
+                    continue
+                outer = polygon[0]
+                holes = polygon[1:]
+                if self._point_in_ring(home_lat, home_lon, outer) and not any(
+                    self._point_in_ring(home_lat, home_lon, hole) for hole in holes
+                ):
+                    return 0.0
+                distances.extend(
+                    self._distance_to_ring_km(home_lat, home_lon, ring)
+                    for ring in polygon
+                    if isinstance(ring, list) and len(ring) >= 2
+                )
+            if distances:
+                return min(distances)
+
+        geometry_points = alert.get("_geometry_points")
+        if isinstance(geometry_points, list):
+            distances = [
+                self._haversine_km(home_lat, home_lon, float(point[0]), float(point[1]))
+                for point in geometry_points
+                if isinstance(point, list)
+                and len(point) >= 2
+                and self._valid_lat_lon(
+                    self._to_float_or_none(point[0]), self._to_float_or_none(point[1])
+                )
+            ]
+            if distances:
+                return min(distances)
+
+        lat = self._to_float_or_none(alert.get("latitude"))
+        lon = self._to_float_or_none(alert.get("longitude"))
+        if self._valid_lat_lon(lat, lon):
+            return self._haversine_km(home_lat, home_lon, lat, lon)
+        return None
+
+    def _point_in_ring(self, lat: float, lon: float, ring: list) -> bool:
+        """Return whether a point is inside a polygon ring using ray casting."""
+        inside = False
+        if len(ring) < 3:
+            return False
+        previous = ring[-1]
+        for current in ring:
+            if not (
+                isinstance(current, list)
+                and len(current) >= 2
+                and isinstance(previous, list)
+                and len(previous) >= 2
+            ):
+                previous = current
+                continue
+            current_lat, current_lon = float(current[0]), float(current[1])
+            previous_lat, previous_lon = float(previous[0]), float(previous[1])
+            crosses = (current_lat > lat) != (previous_lat > lat)
+            if crosses:
+                boundary_lon = (previous_lon - current_lon) * (lat - current_lat) / (
+                    previous_lat - current_lat
+                ) + current_lon
+                if lon < boundary_lon:
+                    inside = not inside
+            previous = current
+        return inside
+
+    def _distance_to_ring_km(self, lat: float, lon: float, ring: list) -> float:
+        """Return the minimum local-planar distance from a point to a ring."""
+        return min(
+            self._point_to_segment_distance_km(lat, lon, ring[index], ring[(index + 1) % len(ring)])
+            for index in range(len(ring))
+        )
+
+    def _point_to_segment_distance_km(
+        self, lat: float, lon: float, start: list, end: list
+    ) -> float:
+        """Measure point-to-segment distance with a local equirectangular projection."""
+        lon_scale = 111.320 * math.cos(math.radians(lat))
+        lat_scale = 110.574
+
+        def projected(point: list) -> tuple[float, float]:
+            point_lat = float(point[0])
+            point_lon = float(point[1])
+            delta_lon = (point_lon - lon + 180) % 360 - 180
+            return delta_lon * lon_scale, (point_lat - lat) * lat_scale
+
+        start_x, start_y = projected(start)
+        end_x, end_y = projected(end)
+        segment_x = end_x - start_x
+        segment_y = end_y - start_y
+        length_squared = segment_x * segment_x + segment_y * segment_y
+        if length_squared <= 1e-12:
+            return math.hypot(start_x, start_y)
+        projection = max(
+            0.0,
+            min(1.0, -(start_x * segment_x + start_y * segment_y) / length_squared),
+        )
+        return math.hypot(start_x + projection * segment_x, start_y + projection * segment_y)
+
+    def _public_alerts(self, alerts: list[dict]) -> list[dict]:
+        """Remove internal geometry arrays before publishing sensor attributes."""
+        return [
+            {key: value for key, value in alert.items() if not key.startswith("_geometry_")}
+            for alert in alerts
+        ]
 
     def _haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Return approximate distance in kilometers."""

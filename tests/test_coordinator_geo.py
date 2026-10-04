@@ -82,6 +82,97 @@ class CoordinatorGeoTests(unittest.TestCase):
         scored = self.c._score_item(FeedItem("Sturm über Bayern", "http://x", "", "", "tagesschau_all"))
         self.assertEqual("BY", scored["state"])
 
+    def test_geojson_point_uses_longitude_latitude_order(self):
+        self.assertEqual(
+            (48.728, 11.5588),
+            self.c._extract_lat_lon({"type": "Point", "coordinates": [11.5588, 48.728]}),
+        )
+
+    def test_cap_coordinate_string_keeps_latitude_longitude_order(self):
+        self.assertEqual(
+            (48.728, 11.5588),
+            self.c._extract_lat_lon({"coordinate": "48.728, 11.5588"}),
+        )
+
+    def test_invalid_coordinate_pair_is_rejected(self):
+        self.assertEqual(
+            (None, None),
+            self.c._extract_lat_lon({"latitude": 148.0, "longitude": 211.0}),
+        )
+
+    def test_polygon_centroid_is_area_weighted(self):
+        geometry = {
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [6, 0], [0, 6], [0, 0]]],
+        }
+        context = self.c._geometry_context_from_geojson(geometry)
+        self.assertAlmostEqual(2.0, context["latitude"], places=6)
+        self.assertAlmostEqual(2.0, context["longitude"], places=6)
+
+    def test_radius_uses_polygon_edge_instead_of_centroid(self):
+        geometry = self.c._geometry_context_from_geojson(
+            {
+                "type": "Polygon",
+                "coordinates": [
+                    [[9.0, 48.7], [9.2, 48.7], [9.2, 48.9], [9.0, 48.9], [9.0, 48.7]]
+                ],
+            }
+        )
+        alert = {
+            "latitude": geometry["latitude"],
+            "longitude": geometry["longitude"],
+            "_geometry_polygons": geometry["polygons"],
+        }
+        distance = self.c._alert_distance_km(alert, (48.8, 8.96))
+        centroid_distance = self.c._haversine_km(48.8, 8.96, 48.8, 9.1)
+        self.assertLess(distance, 5)
+        self.assertGreater(centroid_distance, 5)
+        self.assertEqual(
+            [alert], self.c._filter_alerts_by_radius([alert], (48.8, 8.96), 5, "local")
+        )
+        self.assertTrue(self.c._build_alert_map_items([alert], (48.8, 8.96), 5)[0]["local"])
+
+    def test_multipolygon_accepts_any_local_part(self):
+        geometry = self.c._geometry_context_from_geojson(
+            {
+                "type": "MultiPolygon",
+                "coordinates": [
+                    [[[11.5, 48.5], [11.7, 48.5], [11.7, 48.7], [11.5, 48.5]]],
+                    [[[9.0, 48.7], [9.2, 48.7], [9.2, 48.9], [9.0, 48.7]]],
+                ],
+            }
+        )
+        alert = {"_geometry_polygons": geometry["polygons"]}
+        self.assertEqual(0.0, self.c._alert_distance_km(alert, (48.8, 9.1)))
+
+    def test_polygon_hole_is_not_treated_as_covered_area(self):
+        geometry = self.c._geometry_context_from_geojson(
+            {
+                "type": "Polygon",
+                "coordinates": [
+                    [[9.0, 48.7], [9.2, 48.7], [9.2, 48.9], [9.0, 48.9], [9.0, 48.7]],
+                    [[9.08, 48.78], [9.12, 48.78], [9.12, 48.82], [9.08, 48.82], [9.08, 48.78]],
+                ],
+            }
+        )
+        alert = {"_geometry_polygons": geometry["polygons"]}
+        self.assertGreater(self.c._alert_distance_km(alert, (48.8, 9.1)), 1.0)
+
+    def test_internal_geometry_is_not_published(self):
+        public = self.c._public_alerts(
+            [
+                {
+                    "title": "Warnung",
+                    "_geometry_polygons": [[[[48.8, 9.1]]]],
+                    "distance_km": 2.4,
+                    "geo_precision": "warning_area",
+                }
+            ]
+        )
+        self.assertNotIn("_geometry_polygons", public[0])
+        self.assertEqual(2.4, public[0]["distance_km"])
+        self.assertEqual("warning_area", public[0]["geo_precision"])
+
 
 if __name__ == "__main__":
     unittest.main()

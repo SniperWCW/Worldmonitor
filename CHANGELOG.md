@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.2 - 2026-10-04
+
+### Fixed
+
+- MoWaS and other official warnings now always respect the configured Home radius in local focus mode, even when a warning district is configured.
+- Radius checks use the complete Polygon or MultiPolygon warning area, including holes, instead of only its center point.
+- GeoJSON coordinates are interpreted in the RFC-defined longitude/latitude order and validated before use.
+- Map markers use an area-weighted warning centroid, while diagnostic attributes expose distance and geocoding precision without publishing large geometry arrays.
+- A local keyword can no longer pull an already geocoded remote warning into the local list.
+- Affected-region text is used only as a fallback when warning geometry is unavailable.
+- Reset persisted score history because stricter local warning selection changes the local score semantics.
+
 ## 0.2.1 - 2026-10-03
 
 ### Changed
