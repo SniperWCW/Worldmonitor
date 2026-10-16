@@ -43,11 +43,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Expose and auto-register the Lovelace card resource when possible."""
+    # Set the flag before the first await so concurrent callers
+    # (async_setup and async_setup_entry) cannot both register.
     if hass.data.get(f"{DOMAIN}_frontend_registered"):
         return
+    hass.data[f"{DOMAIN}_frontend_registered"] = True
 
     if not FRONTEND_PATH.exists():
         _LOGGER.warning("Frontend path does not exist: %s", FRONTEND_PATH)
+        hass.data[f"{DOMAIN}_frontend_registered"] = False
         return
 
     await hass.http.async_register_static_paths(
@@ -59,12 +63,11 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         FRONTEND_PATH,
     )
 
-    hass.data[f"{DOMAIN}_frontend_registered"] = True
     await _async_register_lovelace_resource(hass)
 
 
 async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
-    """Create the Lovelace resource in storage mode if it is not already present."""
+    """Create or update the Lovelace resource in storage mode, avoiding duplicates."""
     lovelace = hass.data.get("lovelace")
     if lovelace is None or not hasattr(lovelace, "resources"):
         _LOGGER.debug("Lovelace storage resources are not available for auto-registration")
@@ -75,28 +78,54 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
         _LOGGER.debug("Lovelace resources collection is not available")
         return
 
-    existing = resources.async_items()
-    for item in existing:
-        item_url = item.get("url") or ""
-        item_base_url = item_url.split("?", 1)[0]
-        resource_base_url = CARD_RESOURCE_URL.split("?", 1)[0]
-        if item_url == CARD_RESOURCE_URL:
-            return
-        if item_base_url == resource_base_url and hasattr(resources, "async_update_item"):
+    # YAML-mode resources are read-only; the user manages them manually.
+    if not hasattr(resources, "async_create_item"):
+        _LOGGER.debug("Lovelace resources are in YAML mode, skipping auto-registration")
+        return
+
+    # The collection may not be loaded yet; without loading, async_items()
+    # is empty and a new duplicate would be created on every restart.
+    if getattr(resources, "loaded", True) is False:
+        await resources.async_load()
+        resources.loaded = True
+
+    resource_base_url = CARD_RESOURCE_URL.split("?", 1)[0]
+    matches = [
+        item
+        for item in resources.async_items()
+        if (item.get("url") or "").split("?", 1)[0] == resource_base_url
+    ]
+
+    if matches:
+        # Keep the first entry, update it to the current version if needed.
+        keep, extras = matches[0], matches[1:]
+        if keep.get("url") != CARD_RESOURCE_URL and hasattr(resources, "async_update_item"):
             try:
                 await resources.async_update_item(
-                    item["id"],
+                    keep["id"],
                     {"res_type": "module", "url": CARD_RESOURCE_URL},
                 )
-                _LOGGER.info("Updated Lovelace resource %s -> %s", item_url, CARD_RESOURCE_URL)
-                return
+                _LOGGER.info("Updated Lovelace resource %s -> %s", keep.get("url"), CARD_RESOURCE_URL)
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(
                     "Could not update Lovelace resource %s to %s: %s",
-                    item_url,
+                    keep.get("url"),
                     CARD_RESOURCE_URL,
                     err,
                 )
+        # Remove duplicate entries left over from earlier versions.
+        if hasattr(resources, "async_delete_item"):
+            for item in extras:
+                try:
+                    await resources.async_delete_item(item["id"])
+                    _LOGGER.info("Removed duplicate Lovelace resource %s", item.get("url"))
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Could not remove duplicate Lovelace resource %s: %s",
+                        item.get("url"),
+                        err,
+                    )
+        return
 
     try:
         await resources.async_create_item({"res_type": "module", "url": CARD_RESOURCE_URL})

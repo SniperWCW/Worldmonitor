@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4 - 2026-10-16
+
+### Fixed
+
+- The Lovelace card resource is no longer registered twice. The resource collection is now loaded before it is checked, concurrent setup calls are guarded, and duplicate entries left over from earlier versions are removed automatically.
+
 ## 0.2.3 - 2026-10-04
 
 ### Changed
