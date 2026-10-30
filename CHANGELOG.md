@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0 - 2026-10-30
+
+### Added
+
+- **Live & Kameras:** new card panel with a configurable list of streams and cameras (options field "Live-Streams und Kameras", one `Name | URL or camera.entity | region` per line). Supports YouTube links (privacy embed, loaded only after a tap), HLS (`.m3u8`), snapshot image URLs (reloaded every 30 s) and Home Assistant `camera.*` entities. No stream addresses are shipped as defaults.
+- **Autobahn layer (optional):** webcams (still images), closures and traffic warnings for the configured motorways (`A8, A81`, max. 8) from the Autobahn GmbH API, shown on the map and in a new "Verkehr, Pegel & Messwerte" panel.
+- **Water levels (optional):** PEGELONLINE gauges within the local radius at flood mark (Meldestufe) 1 or higher.
+- **Radiation (optional):** BfS ODL stations with a dose rate of 0.3 uSv/h or more.
+- **Alert events:** the `lage_monitor_alert` event is fired on the Home Assistant bus for status changes, score drops (default 15 points, 0 = off), new local official warnings, rising flood marks and elevated radiation stations. Optional notify service and per-event cooldown (default 60 min). The first refresh after a restart only seeds the baseline.
+- New sensor attributes `layer_items` and `live_streams` (excluded from the recorder).
+
+### Changed
+
+- GeoJSON geometry parsing moved from `coordinator.py` to the pure module `geometry.py`; new sources live in the `sources/` package and `layers.py`, so the coordinator no longer grows with every source.
+
+### Notes
+
+- Everything new is off by default. The Autobahn, PEGELONLINE and BfS parsers follow the published API documentation and are unit-tested with sample payloads; they have not been run against the live services yet.
+
 ## 0.2.4 - 2026-10-16
 
 ### Fixed

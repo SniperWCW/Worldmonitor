@@ -19,6 +19,8 @@ from .const import (
     ATTR_GLOBAL_RISK_SCORE,
     ATTR_HEADLINES,
     ATTR_HISTORY_SUMMARY,
+    ATTR_LAYER_ITEMS,
+    ATTR_LIVE_STREAMS,
     ATTR_LAST_UPDATE,
     ATTR_LOCAL_ALERTS,
     ATTR_LOCAL_SCORE,
@@ -75,6 +77,9 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
     """Base sensor for Lage Monitor."""
 
     _attr_has_entity_name = True
+    # Large, fast-changing payloads for the dashboard card; keep them out of the
+    # recorder database (HA drops attributes above 16 KB anyway).
+    _unrecorded_attributes = frozenset({ATTR_LAYER_ITEMS, ATTR_LIVE_STREAMS})
 
     def __init__(self, coordinator: LageMonitorCoordinator, entry: ConfigEntry, key: str, name: str) -> None:
         super().__init__(coordinator)
@@ -147,4 +152,6 @@ class LageMonitorSensor(CoordinatorEntity[LageMonitorCoordinator], SensorEntity)
             ATTR_TOP_KEYWORDS: self.coordinator.data.top_keywords,
             ATTR_THEME_SCORES: self.coordinator.data.theme_scores,
             ATTR_SCOPE_COUNTS: self.coordinator.data.scope_counts,
+            ATTR_LAYER_ITEMS: self.coordinator.data.layer_items,
+            ATTR_LIVE_STREAMS: self.coordinator.data.live_streams,
         }

@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from email.utils import parsedate_to_datetime
 import html
 import logging
 import math
 import re
+import time
 from typing import Any
 import unicodedata
 from urllib.parse import quote
@@ -23,7 +24,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ALERT_COOLDOWN_MIN,
+    CONF_ALERT_NOTIFY_SERVICE,
     CONF_ALERT_RADIUS_KM,
+    CONF_ALERT_SCORE_DROP,
+    CONF_AUTOBAHN_ROADS,
+    CONF_LAYER_RADIATION,
+    CONF_LAYER_WATER,
+    CONF_LIVE_STREAMS,
     CONF_CUSTOM_PRESS_FEEDS,
     CONF_FOCUS_MODE,
     CONF_INCLUDE_NEWS,
@@ -39,9 +47,16 @@ from .const import (
     CONF_WARN_LHP,
     CONF_WARN_MOWAS,
     CONF_WARN_POLICE,
+    DEFAULT_ALERT_COOLDOWN_MIN,
+    DEFAULT_ALERT_NOTIFY_SERVICE,
     DEFAULT_ALERT_RADIUS_KM,
+    DEFAULT_ALERT_SCORE_DROP,
+    DEFAULT_AUTOBAHN_ROADS,
     DEFAULT_CUSTOM_PRESS_FEEDS,
     DEFAULT_FOCUS_MODE,
+    DEFAULT_LAYER_RADIATION,
+    DEFAULT_LAYER_WATER,
+    DEFAULT_LIVE_STREAMS,
     DEFAULT_LOCAL_KEYWORDS,
     DEFAULT_POLICE_COUNT_MODE,
     DEFAULT_WARN_DWD,
@@ -71,9 +86,12 @@ from .const import (
     WARNUNG_BUND_ASSETS_BASE_URL,
     WARNUNG_BUND_BASE_URL,
 )
-from . import geo
+from . import alerting, geo, geometry
 from .feed import FeedItem, fetch_feed, fetch_json, fetch_json_conditional, iso_timestamp
 from .fetchcache import FetchResult, ResilientCache, SourcePolicy
+from .layers import LayerConfig, fetch_layers
+from .live import parse_streams
+from .sources.autobahn import parse_roads
 from .scoring import aggregate_risk, baseline_deviation, cluster_items, score_text
 
 _LOGGER = logging.getLogger(__name__)
@@ -148,6 +166,8 @@ class LageSnapshot:
     data_quality: dict[str, Any]
     theme_scores: dict[str, dict[str, dict[str, int]]]
     scope_counts: dict[str, dict[str, int]]
+    layer_items: list[dict] = field(default_factory=list)
+    live_streams: list[dict] = field(default_factory=list)
 
 
 class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
@@ -164,6 +184,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         self._fetch_semaphore = asyncio.Semaphore(FETCH_CONCURRENCY)
         self._consecutive_failures = 0
         self._stale_since: str | None = None
+        self._alert_state = alerting.AlertState()
         self._history_store: Store = Store(hass, 1, f"{DOMAIN}_{entry.entry_id}_history")
         interval = timedelta(
             seconds=entry.options.get(CONF_SCAN_INTERVAL, entry.data[CONF_SCAN_INTERVAL])
@@ -370,6 +391,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             alert_radius_km,
         )
         source_status.update(public_event_status)
+
+        layer_items, layer_status = await self._safe_fetch_layers(home_center, alert_radius_km)
+        source_status.update(layer_status)
 
         deduped = self._dedupe_items(headlines)
         deduped = self._filter_recent_feed_items(deduped)
@@ -584,7 +608,7 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             focus_mode,
         )
 
-        return LageSnapshot(
+        snapshot = LageSnapshot(
             germany_score=germany_score,
             global_score=global_score,
             local_score=local_score,
@@ -660,7 +684,67 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             data_quality=data_quality,
             theme_scores=theme_scores,
             scope_counts=scope_counts,
+            layer_items=layer_items,
+            live_streams=parse_streams(self._option(CONF_LIVE_STREAMS, DEFAULT_LIVE_STREAMS)),
         )
+        self._dispatch_alert_events(snapshot)
+        return snapshot
+
+    def _option(self, key: str, default: Any) -> Any:
+        """Read an option, falling back to the original setup data and then the default."""
+        return self.entry.options.get(key, self.entry.data.get(key, default))
+
+    async def _safe_fetch_layers(
+        self,
+        home_center: tuple[float | None, float | None],
+        radius_km: int,
+    ) -> tuple[list[dict], dict[str, dict]]:
+        """Fetch the optional map layers (Autobahn, water levels, radiation)."""
+        cfg = LayerConfig(
+            autobahn_roads=tuple(parse_roads(self._option(CONF_AUTOBAHN_ROADS, DEFAULT_AUTOBAHN_ROADS))),
+            water=bool(self._option(CONF_LAYER_WATER, DEFAULT_LAYER_WATER)),
+            radiation=bool(self._option(CONF_LAYER_RADIATION, DEFAULT_LAYER_RADIATION)),
+        )
+
+        async def fetch(key: str, url: str, min_interval: float, max_stale: float) -> FetchResult:
+            async def run(etag, last_modified):
+                return await fetch_json_conditional(self.hass, url, etag, last_modified)
+
+            return await self._cached_get(
+                key, run, SourcePolicy(min_interval=min_interval, max_stale=max_stale)
+            )
+
+        return await fetch_layers(cfg, home_center, radius_km, fetch)
+
+    def _dispatch_alert_events(self, snapshot: LageSnapshot) -> None:
+        """Fire ``lage_monitor_alert`` for noteworthy changes (and notify if configured)."""
+        try:
+            events = alerting.detect(
+                self._alert_state,
+                now=time.monotonic(),
+                status=_assessment_status(snapshot.germany_score)["key"],
+                score=snapshot.germany_score,
+                local_alerts=snapshot.local_alerts,
+                layer_items=snapshot.layer_items,
+                drop_threshold=int(self._option(CONF_ALERT_SCORE_DROP, DEFAULT_ALERT_SCORE_DROP)),
+                cooldown_s=60.0 * int(self._option(CONF_ALERT_COOLDOWN_MIN, DEFAULT_ALERT_COOLDOWN_MIN)),
+            )
+        except Exception:  # noqa: BLE001 - alerting must never break a refresh
+            _LOGGER.exception("Could not evaluate Lage Monitor alert events")
+            return
+        service = str(self._option(CONF_ALERT_NOTIFY_SERVICE, DEFAULT_ALERT_NOTIFY_SERVICE)).strip()
+        if service.startswith("notify."):
+            service = service[len("notify."):]
+        for event in events:
+            self.hass.bus.async_fire(alerting.EVENT_NAME, event)
+            if service and re.fullmatch(r"[a-z0-9_]+", service):
+                self.hass.async_create_task(
+                    self.hass.services.async_call(
+                        "notify",
+                        service,
+                        {"title": "Lage Monitor", "message": alerting.format_message(event)},
+                    )
+                )
 
     def _build_score_trend(self, germany_score: int, stability_index: int) -> dict[str, str | int]:
         """Compare the current snapshot against the previous one kept by the coordinator."""
@@ -2185,164 +2269,8 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         return context.get("latitude"), context.get("longitude")
 
     def _geometry_context_from_geojson(self, geojson: object) -> dict[str, Any]:
-        """Parse RFC 7946 geometry and retain areas for precise radius checks."""
-        polygons: list[list[list[list[float]]]] = []
-        points: list[list[float]] = []
-
-        def position(raw: object) -> list[float] | None:
-            if not isinstance(raw, (list, tuple)) or len(raw) < 2:
-                return None
-            lon = self._to_float_or_none(raw[0])
-            lat = self._to_float_or_none(raw[1])
-            if not self._valid_lat_lon(lat, lon):
-                return None
-            return [float(lat), float(lon)]
-
-        def ring(raw: object) -> list[list[float]]:
-            if not isinstance(raw, list):
-                return []
-            return [parsed for item in raw if (parsed := position(item)) is not None]
-
-        def polygon(raw: object) -> list[list[list[float]]]:
-            if not isinstance(raw, list):
-                return []
-            parsed_rings = [parsed for item in raw if len(parsed := ring(item)) >= 3]
-            return parsed_rings
-
-        def walk(node: object) -> None:
-            if not isinstance(node, dict):
-                return
-            kind = str(node.get("type") or "").lower()
-            if kind == "featurecollection":
-                for feature in node.get("features") or []:
-                    walk(feature)
-                return
-            if kind == "feature":
-                walk(node.get("geometry"))
-                return
-            if kind == "geometrycollection":
-                for geometry in node.get("geometries") or []:
-                    walk(geometry)
-                return
-
-            coordinates = node.get("coordinates")
-            if kind == "polygon":
-                parsed = polygon(coordinates)
-                if parsed:
-                    polygons.append(parsed)
-                return
-            if kind == "multipolygon" and isinstance(coordinates, list):
-                for raw_polygon in coordinates:
-                    parsed = polygon(raw_polygon)
-                    if parsed:
-                        polygons.append(parsed)
-                return
-            if kind == "point":
-                parsed = position(coordinates)
-                if parsed:
-                    points.append(parsed)
-                return
-            if kind in {"multipoint", "linestring"} and isinstance(coordinates, list):
-                points.extend(parsed for item in coordinates if (parsed := position(item)) is not None)
-                return
-            if kind == "multilinestring" and isinstance(coordinates, list):
-                for line in coordinates:
-                    if isinstance(line, list):
-                        points.extend(parsed for item in line if (parsed := position(item)) is not None)
-                return
-
-            # Some upstream event feeds omit the geometry type. Keep a safe point fallback.
-            points.extend(
-                [
-                    [lat, lon]
-                    for lon, lat in self._flatten_coordinates(coordinates)
-                    if self._valid_lat_lon(lat, lon)
-                ]
-            )
-
-        walk(geojson)
-        latitude, longitude = self._area_weighted_centroid(polygons)
-        if latitude is None or longitude is None:
-            all_points = points or [
-                point
-                for polygon_item in polygons
-                for ring_item in polygon_item
-                for point in ring_item
-            ]
-            if all_points:
-                latitude = sum(point[0] for point in all_points) / len(all_points)
-                longitude = sum(point[1] for point in all_points) / len(all_points)
-
-        context: dict[str, Any] = {}
-        if latitude is not None and longitude is not None:
-            context["latitude"] = round(latitude, 6)
-            context["longitude"] = round(longitude, 6)
-        if polygons:
-            context["polygons"] = polygons
-        elif points:
-            context["points"] = points
-        return context
-
-    def _area_weighted_centroid(
-        self, polygons: list[list[list[list[float]]]]
-    ) -> tuple[float | None, float | None]:
-        """Return polygon centroid while subtracting holes and weighting parts by area."""
-        weighted_lat = 0.0
-        weighted_lon = 0.0
-        total_area = 0.0
-        for polygon in polygons:
-            for index, ring in enumerate(polygon):
-                centroid_lat, centroid_lon, area = self._ring_centroid(ring)
-                if centroid_lat is None or centroid_lon is None or area <= 0:
-                    continue
-                weight = area if index == 0 else -area
-                weighted_lat += centroid_lat * weight
-                weighted_lon += centroid_lon * weight
-                total_area += weight
-        if total_area <= 1e-12:
-            return None, None
-        return weighted_lat / total_area, weighted_lon / total_area
-
-    def _ring_centroid(
-        self, ring: list[list[float]]
-    ) -> tuple[float | None, float | None, float]:
-        """Return planar centroid and absolute area for one lat/lon ring."""
-        if len(ring) < 3:
-            return None, None, 0.0
-        cross_sum = 0.0
-        centroid_lon_sum = 0.0
-        centroid_lat_sum = 0.0
-        for index, current in enumerate(ring):
-            following = ring[(index + 1) % len(ring)]
-            current_lat, current_lon = current
-            next_lat, next_lon = following
-            cross = current_lon * next_lat - next_lon * current_lat
-            cross_sum += cross
-            centroid_lon_sum += (current_lon + next_lon) * cross
-            centroid_lat_sum += (current_lat + next_lat) * cross
-        if abs(cross_sum) <= 1e-12:
-            return None, None, 0.0
-        return (
-            centroid_lat_sum / (3 * cross_sum),
-            centroid_lon_sum / (3 * cross_sum),
-            abs(cross_sum) / 2,
-        )
-
-    def _flatten_coordinates(self, coords) -> list[tuple[float, float]]:
-        """Flatten GeoJSON coordinate arrays to lon/lat tuples."""
-        if (
-            isinstance(coords, list)
-            and len(coords) >= 2
-            and isinstance(coords[0], (int, float))
-            and isinstance(coords[1], (int, float))
-        ):
-            return [(float(coords[0]), float(coords[1]))]
-
-        points: list[tuple[float, float]] = []
-        if isinstance(coords, list):
-            for child in coords:
-                points.extend(self._flatten_coordinates(child))
-        return points
+        """Parse RFC 7946 geometry (see ``geometry.geometry_context_from_geojson``)."""
+        return geometry.geometry_context_from_geojson(geojson)
 
     def _build_map_markers(
         self,

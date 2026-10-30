@@ -20,7 +20,23 @@
           "local_keywords": "Lokale Schlüsselwörter",
           "custom_press_feeds": "Zusaetzliche Presseportal-Feeds",
           "alert_radius_km": "Lokaler Radius in Kilometern",
-          "scan_interval": "Aktualisierungsintervall in Sekunden"
+          "scan_interval": "Aktualisierungsintervall in Sekunden",
+          "autobahn_roads": "Autobahnen für Webcams und Sperrungen",
+          "layer_water": "Pegelstände (Hochwasser-Meldestufen) auf der Karte",
+          "layer_radiation": "Erhöhte Strahlungswerte (BfS) auf der Karte",
+          "live_streams": "Live-Streams und Kameras",
+          "alert_notify_service": "Benachrichtigungsdienst für Lage-Ereignisse",
+          "alert_score_drop": "Ereignis bei Lagewert-Abfall um mindestens … Punkte",
+          "alert_cooldown_min": "Sperrzeit pro Ereignis in Minuten"
+        },
+        "data_description": {
+          "autobahn_roads": "Kommagetrennt, zum Beispiel A8, A81 (max. 8). Leer = aus. Webcams sind Standbilder.",
+          "layer_water": "Zeigt Pegel im lokalen Radius ab Meldestufe 1 (PEGELONLINE).",
+          "layer_radiation": "Zeigt Messstationen mit Ortsdosisleistung ab 0,3 µSv/h (BfS ODL).",
+          "live_streams": "Eine Zeile pro Eintrag: Name | URL oder camera.entity | optional Region. Unterstützt YouTube-Links, .m3u8, Bild-URLs und camera.*-Entitäten.",
+          "alert_notify_service": "Optional, zum Beispiel notify.mobile_app_mein_handy. Das Ereignis lage_monitor_alert wird immer gefeuert.",
+          "alert_score_drop": "0 = aus. Vergleich mit dem vorherigen Aktualisierungslauf.",
+          "alert_cooldown_min": "Gleiche Ereignisse werden in dieser Zeit nicht erneut gemeldet."
         }
       }
     }
@@ -46,7 +62,14 @@
           "local_keywords": "Lokale Schlüsselwörter",
           "custom_press_feeds": "Zusaetzliche Presseportal-Feeds",
           "alert_radius_km": "Lokaler Radius in Kilometern",
-          "scan_interval": "Aktualisierungsintervall in Sekunden"
+          "scan_interval": "Aktualisierungsintervall in Sekunden",
+          "autobahn_roads": "Autobahnen für Webcams und Sperrungen",
+          "layer_water": "Pegelstände (Hochwasser-Meldestufen) auf der Karte",
+          "layer_radiation": "Erhöhte Strahlungswerte (BfS) auf der Karte",
+          "live_streams": "Live-Streams und Kameras",
+          "alert_notify_service": "Benachrichtigungsdienst für Lage-Ereignisse",
+          "alert_score_drop": "Ereignis bei Lagewert-Abfall um mindestens … Punkte",
+          "alert_cooldown_min": "Sperrzeit pro Ereignis in Minuten"
         },
         "data_description": {
           "nina_ars": "Wird für warnung.bund.de nicht mehr benötigt und kann leer bleiben.",
@@ -61,7 +84,14 @@
           "warn_dwd": "Schaltet Wetterwarnungen des Deutschen Wetterdienstes ein oder aus.",
           "warn_lhp": "Schaltet Hochwasserwarnungen ein oder aus.",
           "warn_police": "Schaltet Polizeiwarnungen ein oder aus.",
-          "scan_interval": "Wie oft die Quellen neu abgerufen werden."
+          "scan_interval": "Wie oft die Quellen neu abgerufen werden.",
+          "autobahn_roads": "Kommagetrennt, zum Beispiel A8, A81 (max. 8). Leer = aus. Webcams sind Standbilder.",
+          "layer_water": "Zeigt Pegel im lokalen Radius ab Meldestufe 1 (PEGELONLINE).",
+          "layer_radiation": "Zeigt Messstationen mit Ortsdosisleistung ab 0,3 µSv/h (BfS ODL).",
+          "live_streams": "Eine Zeile pro Eintrag: Name | URL oder camera.entity | optional Region. Unterstützt YouTube-Links, .m3u8, Bild-URLs und camera.*-Entitäten.",
+          "alert_notify_service": "Optional, zum Beispiel notify.mobile_app_mein_handy. Das Ereignis lage_monitor_alert wird immer gefeuert.",
+          "alert_score_drop": "0 = aus. Vergleich mit dem vorherigen Aktualisierungslauf.",
+          "alert_cooldown_min": "Gleiche Ereignisse werden in dieser Zeit nicht erneut gemeldet."
         }
       }
     }

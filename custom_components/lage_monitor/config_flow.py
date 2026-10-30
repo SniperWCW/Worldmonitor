@@ -8,9 +8,17 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers import selector
 
 from .const import (
+    CONF_ALERT_COOLDOWN_MIN,
+    CONF_ALERT_NOTIFY_SERVICE,
     CONF_ALERT_RADIUS_KM,
+    CONF_ALERT_SCORE_DROP,
+    CONF_AUTOBAHN_ROADS,
+    CONF_LAYER_RADIATION,
+    CONF_LAYER_WATER,
+    CONF_LIVE_STREAMS,
     CONF_CUSTOM_PRESS_FEEDS,
     CONF_FOCUS_MODE,
     CONF_INCLUDE_NEWS,
@@ -26,7 +34,14 @@ from .const import (
     CONF_WARN_LHP,
     CONF_WARN_MOWAS,
     CONF_WARN_POLICE,
+    DEFAULT_ALERT_COOLDOWN_MIN,
+    DEFAULT_ALERT_NOTIFY_SERVICE,
     DEFAULT_ALERT_RADIUS_KM,
+    DEFAULT_ALERT_SCORE_DROP,
+    DEFAULT_AUTOBAHN_ROADS,
+    DEFAULT_LAYER_RADIATION,
+    DEFAULT_LAYER_WATER,
+    DEFAULT_LIVE_STREAMS,
     DEFAULT_CUSTOM_PRESS_FEEDS,
     DEFAULT_FOCUS_MODE,
     DEFAULT_INCLUDE_NEWS,
@@ -117,6 +132,34 @@ def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_ALERT_RADIUS_KM,
                 default=defaults.get(CONF_ALERT_RADIUS_KM, DEFAULT_ALERT_RADIUS_KM),
             ): vol.All(vol.Coerce(int), vol.Range(min=5, max=300)),
+            vol.Optional(
+                CONF_AUTOBAHN_ROADS,
+                default=defaults.get(CONF_AUTOBAHN_ROADS, DEFAULT_AUTOBAHN_ROADS),
+            ): str,
+            vol.Optional(
+                CONF_LAYER_WATER,
+                default=defaults.get(CONF_LAYER_WATER, DEFAULT_LAYER_WATER),
+            ): bool,
+            vol.Optional(
+                CONF_LAYER_RADIATION,
+                default=defaults.get(CONF_LAYER_RADIATION, DEFAULT_LAYER_RADIATION),
+            ): bool,
+            vol.Optional(
+                CONF_LIVE_STREAMS,
+                default=defaults.get(CONF_LIVE_STREAMS, DEFAULT_LIVE_STREAMS),
+            ): selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
+            vol.Optional(
+                CONF_ALERT_NOTIFY_SERVICE,
+                default=defaults.get(CONF_ALERT_NOTIFY_SERVICE, DEFAULT_ALERT_NOTIFY_SERVICE),
+            ): str,
+            vol.Optional(
+                CONF_ALERT_SCORE_DROP,
+                default=defaults.get(CONF_ALERT_SCORE_DROP, DEFAULT_ALERT_SCORE_DROP),
+            ): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+            vol.Optional(
+                CONF_ALERT_COOLDOWN_MIN,
+                default=defaults.get(CONF_ALERT_COOLDOWN_MIN, DEFAULT_ALERT_COOLDOWN_MIN),
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=1440)),
             vol.Optional(
                 CONF_SCAN_INTERVAL,
                 default=defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),

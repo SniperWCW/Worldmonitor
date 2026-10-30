@@ -79,7 +79,15 @@ card.hass = {
         scope_counts: { local: { alerts: 0, military: 0 } },
         diagnostics: { alert_radius_km: 25 },
         last_update: "2026-10-03T12:00:00+00:00",
-        top_keywords: []
+        top_keywords: [],
+        layer_items: [
+          { layer: "road", key: "closure:1", title: "A8 | <b>Sperrung</b>", detail: "Vollsperrung", severity: 2, road: "A8", latitude: 48.8, longitude: 9.0, distance_km: 12.3 },
+          { layer: "webcams", key: "webcam:1", title: "Cam", image: "javascript:alert(1)", severity: 0, latitude: 48.8, longitude: 9.0 }
+        ],
+        live_streams: [
+          { label: "Tagesschau <i>24</i>", type: "youtube", url: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", region: "DE" },
+          { label: "Garage", type: "camera", url: "camera.garage", region: "" }
+        ]
       }
     },
     "sensor.active_alerts": { state: "0" },
@@ -97,5 +105,10 @@ assert.doesNotMatch(html, /<script>bad\(\)<\/script>/);
 assert.doesNotMatch(html, /href="javascript:/);
 assert.match(html, /Eigene Pressequelle 1/);
 assert.match(html, /Lage &lt;Monitor&gt;/);
+
+assert.match(html, /Verkehr, Pegel &amp; Messwerte/);
+assert.match(html, /Live &amp; Kameras/);
+assert.doesNotMatch(html, /<b>Sperrung<\/b>/);
+assert.doesNotMatch(html, /<i>24<\/i>/);
 
 console.log("frontend smoke test passed");

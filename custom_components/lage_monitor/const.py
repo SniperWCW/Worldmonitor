@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "lage_monitor"
 FRONTEND_BASE_URL = f"/{DOMAIN}_frontend"
 CARD_FILENAME = "lage-monitor-card.js"
-CARD_RESOURCE_VERSION = "0.2.4"
+CARD_RESOURCE_VERSION = "0.3.0"
 CARD_RESOURCE_URL = f"{FRONTEND_BASE_URL}/{CARD_FILENAME}?v={CARD_RESOURCE_VERSION}"
 
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -24,6 +24,13 @@ CONF_FOCUS_MODE = "focus_mode"
 CONF_LOCAL_KEYWORDS = "local_keywords"
 CONF_CUSTOM_PRESS_FEEDS = "custom_press_feeds"
 CONF_ALERT_RADIUS_KM = "alert_radius_km"
+CONF_AUTOBAHN_ROADS = "autobahn_roads"
+CONF_LAYER_WATER = "layer_water"
+CONF_LAYER_RADIATION = "layer_radiation"
+CONF_LIVE_STREAMS = "live_streams"
+CONF_ALERT_NOTIFY_SERVICE = "alert_notify_service"
+CONF_ALERT_SCORE_DROP = "alert_score_drop"
+CONF_ALERT_COOLDOWN_MIN = "alert_cooldown_min"
 
 DEFAULT_SCAN_INTERVAL = 300
 DEFAULT_NINA_ARS = ""
@@ -41,6 +48,13 @@ DEFAULT_FOCUS_MODE = "germany"
 DEFAULT_LOCAL_KEYWORDS = ""
 DEFAULT_CUSTOM_PRESS_FEEDS = ""
 DEFAULT_ALERT_RADIUS_KM = 50
+DEFAULT_AUTOBAHN_ROADS = ""
+DEFAULT_LAYER_WATER = False
+DEFAULT_LAYER_RADIATION = False
+DEFAULT_LIVE_STREAMS = ""
+DEFAULT_ALERT_NOTIFY_SERVICE = ""
+DEFAULT_ALERT_SCORE_DROP = 15
+DEFAULT_ALERT_COOLDOWN_MIN = 60
 
 USGS_EARTHQUAKE_FEED_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
 EONET_EVENTS_API_URL = "https://eonet.gsfc.nasa.gov/api/v3/events"
@@ -94,6 +108,8 @@ ATTR_SOURCE_FRESHNESS = "source_freshness"
 ATTR_DATA_QUALITY = "data_quality"
 ATTR_THEME_SCORES = "theme_scores"
 ATTR_SCOPE_COUNTS = "scope_counts"
+ATTR_LAYER_ITEMS = "layer_items"
+ATTR_LIVE_STREAMS = "live_streams"
 
 WARNUNG_BUND_BASE_URL = "https://warnung.bund.de/api31"
 WARNUNG_BUND_ASSETS_BASE_URL = "https://warnung.bund.de/assets/json"

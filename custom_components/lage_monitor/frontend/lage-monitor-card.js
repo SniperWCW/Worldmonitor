@@ -580,6 +580,54 @@ const CARD_STYLE = `
     background: rgba(255, 255, 255, 0.84);
     font-size: 0.82rem;
   }
+  .live-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .live-btn {
+    appearance: none;
+    padding: 8px 12px;
+    border: 1px solid rgba(37, 99, 235, 0.28);
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.07);
+    color: var(--primary-text-color, inherit);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .live-btn.active {
+    background: var(--primary-color, #2563eb);
+    border-color: var(--primary-color, #2563eb);
+    color: #fff;
+  }
+  .live-btn small {
+    opacity: 0.75;
+    font-weight: 600;
+  }
+  .live-type {
+    margin-right: 6px;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+  }
+  .live-player {
+    margin-top: 12px;
+  }
+  .live-player iframe,
+  .live-player video,
+  .live-player img,
+  .live-player ha-camera-stream {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border: 0;
+    border-radius: 12px;
+    background: #000;
+    object-fit: contain;
+  }
   .empty {
     color: var(--secondary-text-color);
     font-size: 0.92rem;
@@ -1867,6 +1915,54 @@ function filterMapPoints(points, focus, theme = "") {
   return themeFiltered.filter((point) => point.kind === "home" || point.region !== "world");
 }
 
+const LIVE_TYPE_LABEL = { youtube: "YouTube", hls: "HLS", image: "Bild", camera: "Kamera", link: "Link" };
+const LAYER_COLORS = { webcams: "#0e7490", road: "#a16207", water: "#1d4ed8", radiation: "#7e22ce" };
+const SEVERITY_TEXT = ["Info", "Beachten", "Erhöht", "Kritisch"];
+const LAYER_TEXT = { webcams: "Webcam", road: "Verkehr", water: "Pegel", radiation: "Strahlung" };
+
+function layerSeverity(item) {
+  const value = Number(item?.severity);
+  return Number.isFinite(value) ? Math.max(0, Math.min(3, Math.round(value))) : 0;
+}
+
+function renderLayerPopup(item) {
+  const image = item.layer === "webcams" ? safeHttpLink(item.image) : "";
+  const link = safeHttpLink(item.link);
+  return `
+    <strong>${escapeHtml(item.title || "Eintrag")}</strong><br>
+    ${escapeHtml(LAYER_TEXT[item.layer] || item.layer || "")}${item.subtitle ? ` · ${escapeHtml(item.subtitle)}` : ""}
+    ${item.detail ? `<br>${escapeHtml(item.detail)}` : ""}
+    ${image ? `<br><img src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer" style="max-width:240px;width:100%;border-radius:8px;margin-top:6px">` : ""}
+    ${link ? `<br><a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">Quelle öffnen</a>` : ""}
+  `;
+}
+
+function renderInfraList(items) {
+  return `<div class="items">${items.map((item) => {
+    const severity = layerSeverity(item);
+    const meta = [LAYER_TEXT[item.layer] || item.layer, item.road, item.distance_km != null ? `${item.distance_km} km` : ""]
+      .filter(Boolean).map(escapeHtml).join(" · ");
+    return `
+      <div class="item">
+        <div class="item-top"><span class="source">${escapeHtml(SEVERITY_TEXT[severity])}</span></div>
+        <div class="link">${escapeHtml(item.title || "Eintrag")}</div>
+        ${item.detail ? `<div class="summary alert-summary">${escapeHtml(item.detail)}</div>` : ""}
+        <div class="item-meta">${meta}</div>
+      </div>`;
+  }).join("")}</div>`;
+}
+
+function renderLiveBody(streams, selected) {
+  const buttons = streams.map((stream, index) => `
+    <button class="live-btn ${String(index) === String(selected) ? "active" : ""}" type="button" data-live-index="${index}">
+      <span class="live-type">${escapeHtml(LIVE_TYPE_LABEL[stream.type] || stream.type)}</span>${escapeHtml(stream.label)}${stream.region ? ` <small>${escapeHtml(stream.region)}</small>` : ""}
+    </button>`).join("");
+  return `
+    <div class="live-list">${buttons}</div>
+    <div id="live-player" class="live-player" ${selected === "" ? "hidden" : ""}></div>
+    <div class="method-note">Streams werden erst nach dem Antippen geladen. Verfügbarkeit und Nutzungsbedingungen liegen beim jeweiligen Anbieter.</div>`;
+}
+
 class LageMonitorCard extends HTMLElement {
   constructor() {
     super();
@@ -1878,8 +1974,14 @@ class LageMonitorCard extends HTMLElement {
       military: false,
       data: false,
       eventsExpanded: false,
+      infra: false,
+      live: false,
+      liveSelected: "",
       theme: ""
     };
+    this._layerItems = [];
+    this._liveStreams = [];
+    this._liveTimer = null;
     this._lastMarkup = "";
     this._lastMapSignature = "";
     this._map = null;
@@ -1905,6 +2007,7 @@ class LageMonitorCard extends HTMLElement {
   disconnectedCallback() {
     this._mapRenderToken += 1;
     this._teardownMap();
+    this._clearLiveTimer();
   }
 
   set hass(hass) {
@@ -2007,6 +2110,11 @@ class LageMonitorCard extends HTMLElement {
     const qualityScore = Number.isFinite(Number(dataQuality.score)) ? Number(dataQuality.score) : null;
     const qualityLabel = dataQuality.label ? String(dataQuality.label) : "unbekannt";
     const shouldRenderMap = Boolean(config.show_map && this._panelState.map);
+    const layerItems = focus === "world" ? [] : (Array.isArray(attrs.layer_items) ? attrs.layer_items : []);
+    const liveStreams = Array.isArray(attrs.live_streams) ? attrs.live_streams : [];
+    const infraItems = layerItems.filter((item) => item.layer !== "webcams");
+    this._layerItems = layerItems;
+    this._liveStreams = liveStreams;
 
     const markup = `
       <style>${CARD_STYLE}</style>
@@ -2093,6 +2201,20 @@ class LageMonitorCard extends HTMLElement {
                 this._panelState.map
               )}
             ` : ""}
+            ${infraItems.length ? renderCollapsiblePanel(
+              "infra",
+              "Verkehr, Pegel &amp; Messwerte",
+              `${infraItems.length}`,
+              renderInfraList(infraItems),
+              this._panelState.infra
+            ) : ""}
+            ${liveStreams.length ? renderCollapsiblePanel(
+              "live",
+              "Live &amp; Kameras",
+              `${liveStreams.length}`,
+              renderLiveBody(liveStreams, this._panelState.liveSelected),
+              this._panelState.live
+            ) : ""}
             ${renderCollapsiblePanel(
               "alerts",
               "Amtliche Warnungen",
@@ -2159,6 +2281,7 @@ class LageMonitorCard extends HTMLElement {
       focus,
       theme: activeTheme,
       homeCenter,
+      layers: layerItems.map((item) => `${item.key}:${item.severity}:${item.latitude}:${item.longitude}`),
       points: mapPoints.map((point) => ({
         latitude: Number(point.latitude),
         longitude: Number(point.longitude),
@@ -2184,6 +2307,8 @@ class LageMonitorCard extends HTMLElement {
       this._bindScopeTabs();
       this._bindThemeFilters();
       this._bindEventActions();
+      this._bindLiveControls();
+      this._mountLivePlayer();
     }
 
     if (shouldRenderMap && (markupChanged || !this._map || this._lastMapSignature !== mapSignature)) {
@@ -2235,6 +2360,134 @@ class LageMonitorCard extends HTMLElement {
         this.hass = this._hass;
       });
     });
+  }
+
+  _bindLiveControls() {
+    this.shadowRoot.querySelectorAll(".live-btn[data-live-index]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        const index = button.dataset.liveIndex;
+        this._panelState.liveSelected = String(this._panelState.liveSelected) === index ? "" : index;
+        this._persistPanelState();
+        this.hass = this._hass;
+      });
+    });
+  }
+
+  _clearLiveTimer() {
+    if (this._liveTimer) {
+      window.clearInterval(this._liveTimer);
+      this._liveTimer = null;
+    }
+  }
+
+  _mountLivePlayer() {
+    this._clearLiveTimer();
+    const host = this.shadowRoot.getElementById("live-player");
+    if (!host) {
+      return;
+    }
+    host.replaceChildren();
+    const selected = this._panelState.liveSelected;
+    const stream = selected === "" ? null : this._liveStreams?.[Number(selected)];
+    if (!stream) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    const note = (text) => {
+      const el = document.createElement("div");
+      el.className = "empty";
+      el.textContent = text;
+      host.appendChild(el);
+    };
+
+    if (stream.type === "youtube") {
+      const base = String(stream.url || "");
+      if (!base.startsWith("https://www.youtube-nocookie.com/embed/")) {
+        note("Ungültige YouTube-Adresse.");
+        return;
+      }
+      const frame = document.createElement("iframe");
+      frame.src = `${base}${base.includes("?") ? "&" : "?"}autoplay=1&mute=1&playsinline=1`;
+      frame.title = stream.label || "Livestream";
+      frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+      frame.allowFullscreen = true;
+      frame.referrerPolicy = "strict-origin-when-cross-origin";
+      frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation");
+      host.appendChild(frame);
+    } else if (stream.type === "hls") {
+      const url = safeHttpLink(stream.url);
+      const video = document.createElement("video");
+      if (!url) {
+        note("Ungültige Stream-Adresse.");
+        return;
+      }
+      if (!video.canPlayType("application/vnd.apple.mpegurl")) {
+        note("Dieser Browser spielt HLS nicht direkt ab. Binde den Stream als camera.*-Entität in Home Assistant ein und trage diese hier ein.");
+        return;
+      }
+      video.controls = true;
+      video.muted = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.src = url;
+      host.appendChild(video);
+    } else if (stream.type === "image") {
+      const url = safeHttpLink(stream.url);
+      if (!url) {
+        note("Ungültige Bildadresse.");
+        return;
+      }
+      const img = document.createElement("img");
+      img.alt = stream.label || "Kamerabild";
+      img.referrerPolicy = "no-referrer";
+      const load = () => {
+        img.src = `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
+      };
+      load();
+      host.appendChild(img);
+      this._liveTimer = window.setInterval(load, 30000);
+    } else if (stream.type === "camera") {
+      const entityId = String(stream.url || "");
+      const stateObj = this._hass?.states?.[entityId];
+      if (!stateObj) {
+        note(`Kamera ${entityId} wurde nicht gefunden.`);
+        return;
+      }
+      if (customElements.get("ha-camera-stream")) {
+        const el = document.createElement("ha-camera-stream");
+        el.hass = this._hass;
+        el.stateObj = stateObj;
+        el.controls = true;
+        el.muted = true;
+        host.appendChild(el);
+      } else {
+        const img = document.createElement("img");
+        img.alt = stream.label || entityId;
+        const load = () => {
+          const picture = this._hass?.states?.[entityId]?.attributes?.entity_picture;
+          if (picture) {
+            img.src = picture;
+          }
+        };
+        load();
+        host.appendChild(img);
+        this._liveTimer = window.setInterval(load, 10000);
+      }
+    } else {
+      const url = safeHttpLink(stream.url);
+      if (!url) {
+        note("Ungültige Adresse.");
+        return;
+      }
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = `${stream.label} öffnen`;
+      host.appendChild(link);
+    }
   }
 
   _bindThemeFilters() {
@@ -2436,6 +2689,24 @@ class LageMonitorCard extends HTMLElement {
           marker.openPopup();
         }
         bounds.push([lat, lon]);
+      }
+
+      for (const item of this._layerItems || []) {
+        const lat = Number(item.latitude);
+        const lon = Number(item.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          continue;
+        }
+        const severity = layerSeverity(item);
+        const isCam = item.layer === "webcams";
+        L.circleMarker([lat, lon], {
+          radius: isCam ? 5 : 6 + severity * 1.5,
+          color: "#ffffff",
+          weight: 1.5,
+          fillColor: LAYER_COLORS[item.layer] || "#475569",
+          fillOpacity: isCam ? 0.75 : 0.9,
+          bubblingMouseEvents: false
+        }).addTo(this._mapMarkersLayer).bindPopup(renderLayerPopup(item), { maxWidth: 260 });
       }
 
       const homePoint = points.find((point) => point.kind === "home");

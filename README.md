@@ -86,6 +86,12 @@ Official / primary:
 - stern RSS: https://www.stern.de/sonst/rss-die-rss-feeds-von-stern-de-3516462.html
 - WELT RSS: https://www.welt.de/services/rss/
 
+Optional layers (0.3.0):
+
+- Autobahn API: https://autobahn.api.bund.dev/
+- PEGELONLINE: https://pegelonline.wsv.de/webservice/dokuRestapi
+- BfS ODL: https://odlinfo.bfs.de/ODL/EN/service/data-interface/data-interface.html
+
 Additional context for future map and conflict layers:
 
 - OpenStreetMap tile policy: https://operations.osmfoundation.org/policies/tiles/
@@ -151,12 +157,55 @@ When another provider is configured, its required attribution must be entered in
 `tile_attribution`. The card sends an origin referrer and otherwise relies on normal browser
 caching; offline downloads or tile prefetching are not implemented.
 
+## Live streams, cameras and extra layers (0.3.0)
+
+All of this is optional and off by default. Set it up under *Settings > Devices & services > Lage Monitor > Configure*.
+
+**Live & Kameras.** One entry per line in the field "Live-Streams und Kameras":
+
+```text
+# Name | URL or camera entity | optional region
+Tagesschau24 | https://www.youtube.com/watch?v=VIDEO_ID | Nachrichten
+Garage | camera.garage
+Pegel Neckar | https://example.org/cam.jpg | Lokal
+```
+
+- YouTube links become a privacy embed that loads only after a tap. Some in-app web views block YouTube embeds.
+- `.m3u8` streams use native HLS playback. Desktop Chrome may not support this; add the stream as a `camera.*` entity (generic camera) instead.
+- Image URLs are reloaded every 30 seconds.
+- Stream addresses change and have their own terms of use, so none are included. Please check each one yourself.
+
+**Extra map layers**
+
+| Option | Source | Shows |
+| --- | --- | --- |
+| Autobahnen (`A8, A81`, max. 8) | Autobahn GmbH API | Webcam stills, closures, traffic warnings within twice the local radius |
+| Pegelstände | PEGELONLINE | Gauges in the local radius at flood mark 1 or higher |
+| Strahlung | BfS ODL | Stations with 0.3 uSv/h or more |
+
+**Automations.** Changes are published as the `lage_monitor_alert` event with `type` (`status_change`, `score_drop`, `new_official_alert`, `flood_level`, `radiation_elevated`), `direction` (`worse`/`better`), `title` and type-specific fields:
+
+```yaml
+automation:
+  - alias: Lage verschlechtert
+    triggers:
+      - trigger: event
+        event_type: lage_monitor_alert
+        event_data:
+          direction: worse
+    actions:
+      - action: notify.mobile_app_mein_handy
+        data:
+          message: "{{ trigger.event.data.title }}"
+```
+
+Or enter a notify service in the options to be notified without writing an automation.
+
 ## Recommended next steps
 
 1. Add optional conflict feeds such as ACLED or UCDP
-2. Add NASA FIRMS for fire and heat anomalies
+2. Add NASA FIRMS for fire and heat anomalies (needs a free MAP_KEY)
 3. Add OpenSky-backed air activity when real movement data is desired
-4. Add configurable alert automations for thresholds and trend changes
-5. Add optional generated briefings only when explicitly enabled
+4. Add optional generated briefings only when explicitly enabled
 
 See also `ROADMAP.md` for the current project roadmap and planned intelligence features.

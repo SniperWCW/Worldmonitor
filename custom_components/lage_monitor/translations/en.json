@@ -20,7 +20,23 @@
           "local_keywords": "Local keywords",
           "custom_press_feeds": "Additional Presseportal feeds",
           "alert_radius_km": "Local radius in kilometers",
-          "scan_interval": "Refresh interval in seconds"
+          "scan_interval": "Refresh interval in seconds",
+          "autobahn_roads": "Autobahns for webcams and closures",
+          "layer_water": "Water levels (flood marks) on the map",
+          "layer_radiation": "Elevated radiation readings (BfS) on the map",
+          "live_streams": "Live streams and cameras",
+          "alert_notify_service": "Notify service for situation events",
+          "alert_score_drop": "Event when the score drops by at least … points",
+          "alert_cooldown_min": "Cooldown per event in minutes"
+        },
+        "data_description": {
+          "autobahn_roads": "Comma separated, e.g. A8, A81 (max 8). Empty = off. Webcams are still images.",
+          "layer_water": "Shows gauges in the local radius at flood mark 1 or higher (PEGELONLINE).",
+          "layer_radiation": "Shows stations with dose rate of 0.3 uSv/h or more (BfS ODL).",
+          "live_streams": "One entry per line: Name | URL or camera.entity | optional region. Supports YouTube links, .m3u8, image URLs and camera.* entities.",
+          "alert_notify_service": "Optional, e.g. notify.mobile_app_my_phone. The lage_monitor_alert event is always fired.",
+          "alert_score_drop": "0 = off. Compared with the previous refresh.",
+          "alert_cooldown_min": "Identical events are not reported again within this time."
         }
       }
     }
@@ -46,7 +62,14 @@
           "local_keywords": "Local keywords",
           "custom_press_feeds": "Additional Presseportal feeds",
           "alert_radius_km": "Local radius in kilometers",
-          "scan_interval": "Refresh interval in seconds"
+          "scan_interval": "Refresh interval in seconds",
+          "autobahn_roads": "Autobahns for webcams and closures",
+          "layer_water": "Water levels (flood marks) on the map",
+          "layer_radiation": "Elevated radiation readings (BfS) on the map",
+          "live_streams": "Live streams and cameras",
+          "alert_notify_service": "Notify service for situation events",
+          "alert_score_drop": "Event when the score drops by at least … points",
+          "alert_cooldown_min": "Cooldown per event in minutes"
         },
         "data_description": {
           "nina_ars": "No longer needed for warnung.bund.de and can be left empty.",
@@ -61,7 +84,14 @@
           "warn_dwd": "Enable or disable weather alerts from the German Weather Service.",
           "warn_lhp": "Enable or disable flood alerts.",
           "warn_police": "Enable or disable police alerts.",
-          "scan_interval": "How often the sources are refreshed."
+          "scan_interval": "How often the sources are refreshed.",
+          "autobahn_roads": "Comma separated, e.g. A8, A81 (max 8). Empty = off. Webcams are still images.",
+          "layer_water": "Shows gauges in the local radius at flood mark 1 or higher (PEGELONLINE).",
+          "layer_radiation": "Shows stations with dose rate of 0.3 uSv/h or more (BfS ODL).",
+          "live_streams": "One entry per line: Name | URL or camera.entity | optional region. Supports YouTube links, .m3u8, image URLs and camera.* entities.",
+          "alert_notify_service": "Optional, e.g. notify.mobile_app_my_phone. The lage_monitor_alert event is always fired.",
+          "alert_score_drop": "0 = off. Compared with the previous refresh.",
+          "alert_cooldown_min": "Identical events are not reported again within this time."
         }
       }
     }

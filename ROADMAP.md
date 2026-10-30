@@ -1,6 +1,6 @@
 # Lage Monitor Roadmap
 
-Stand: 2026-10-03
+Stand: 2026-10-30
 
 ## Bereits umgesetzt
 
@@ -16,18 +16,22 @@ Stand: 2026-10-03
 - Fokusabhängige Lagekarte mit begrenztem Leaflet-Stacking-Context
 - Konsequente HTML- und URL-Absicherung externer Feedinhalte
 - Korrigierte Integrationsmetadaten und Codeowner
+- Live-Panel für Streams und Kameras (YouTube, HLS, Bild-URLs, camera.*-Entitäten)
+- Optionale Layer: Autobahn (Webcams, Sperrungen, Meldungen), Pegelstände, BfS-Ortsdosisleistung
+- HA-Event `lage_monitor_alert` für Statuswechsel, Lagewert-Abfall, neue Warnungen, Hochwasserstufen und Strahlung; optionaler Notify-Dienst
+- Geometrie-Logik aus dem Coordinator ausgelagert (`geometry.py`), neue Quellen in `sources/`
 
 ## Als Nächstes sinnvoll
 
 1. Konfigurierbare Schwellen und Themenprofile
 2. Optionaler Morning-Briefing- und Evening-Briefing-Sensor
 3. Ausgewählte Krisenräume als zusätzliche gespeicherte Fokusansichten
-4. Benachrichtigungen bei belastbaren Trendwechseln
+4. Alert-Ereignisse per UI-Schwellen je Thema konfigurierbar machen
 5. Kalibrierung der Themenwerte anhand längerer realer Verlaufsdaten
 
 ## Erweiterungen mit neuen Datenquellen
 
-1. NASA FIRMS für Feuer/Wärmeanomalien
+1. NASA FIRMS für Feuer/Wärmeanomalien (benötigt einen kostenlosen MAP_KEY; EONET deckt Waldbrände bereits grob ab)
 2. OpenSky für Luftlage und mögliche Airspace-Disruption-Signale
 3. ACLED oder UCDP für internationale Konfliktimpulse
 4. Makrodaten für Energie-, Markt- und Versorgungsstress
@@ -45,3 +49,10 @@ Stand: 2026-10-03
 2. Eigene Krisen-Tracker-Panels für feste Konfliktbereiche
 3. Filter für Warnungen, Kategorien und Prioritätsprofile
 4. Push-Automationen für Schwellen, Trendwechsel und Eskalationen
+
+## Offene Punkte nach 0.3.0
+
+1. Neue Layer gegen die Live-Dienste prüfen und Antwortformate nachschärfen
+2. Bahn-Störungen: keine schlüsselfreie offizielle Schnittstelle bekannt
+3. Weitere Aufteilung von `coordinator.py` (Warnungen, News, Scoring) in eigene Module
+4. Optionale Stream-Vorlagenliste, sobald geprüfte Adressen vorliegen
