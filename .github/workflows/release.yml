@@ -1,0 +1,64 @@
+name: Release
+
+# Publishes a GitHub release when a version tag (v1.2.3) is pushed.
+# The tag must match the version in manifest.json and have a CHANGELOG entry.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run tests
+        run: |
+          python -m unittest discover -s tests -v
+          node tests/frontend-smoke.js
+
+      - name: Check tag against manifest and card version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST=$(python -c "import json;print(json.load(open('custom_components/lage_monitor/manifest.json'))['version'])")
+          CARD=$(sed -n 's/^CARD_RESOURCE_VERSION = "\(.*\)"/\1/p' custom_components/lage_monitor/const.py)
+          echo "tag=$VERSION manifest=$MANIFEST card=$CARD"
+          test "$VERSION" = "$MANIFEST" || { echo "::error::Tag $VERSION does not match manifest.json $MANIFEST"; exit 1; }
+          test "$VERSION" = "$CARD" || { echo "::error::Tag $VERSION does not match CARD_RESOURCE_VERSION $CARD"; exit 1; }
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            $0 ~ "^## " v " " { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md || { echo "::error::No CHANGELOG.md entry for $VERSION"; exit 1; }
+          cat release-notes.md
+
+      - name: Build integration archive
+        run: |
+          cd custom_components/lage_monitor
+          zip -r -q ../../lage_monitor.zip . -x "*/__pycache__/*" "__pycache__/*" "*.pyc"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" lage_monitor.zip \
+            --title "Lage Monitor ${GITHUB_REF_NAME#v}" \
+            --notes-file release-notes.md \
+            --verify-tag
