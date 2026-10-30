@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 - 2026-10-30
+
+### Added
+
+- **Test alert:** the service `lage_monitor.test_alert` fires a `lage_monitor_alert` event with `type: test` and forwards it to the configured notify service, so automations and push messages can be checked without waiting for a real event.
+- **Blueprint** `blueprints/automation/lage_monitor/alert_notify.yaml`: runs any action when the Lage Monitor reports an event, with a filter for event types and "only worse".
+- **My routes:** option "Meine Strecken" (`A81 | Feuerbach, Ludwigsburg`, one line per route). Reports and webcams of these routes are shown even outside the local radius and marked "Meine Strecke". Traffic jams now show delay and average speed, and the panel shows webcam images of your routes.
+- **Event `route_delay`:** a new jam on one of your routes with a delay of at least 15 minutes (option, 0 = off).
+- **Nearest gauges always:** option "Nächste Pegel immer anzeigen" shows the four nearest gauges with water level and trend (rising/falling) even below flood mark 1.
+
+### Changed
+
+- `coordinator.py` was split from 2,900 to 1,250 lines: official warnings (`warnings_mixin.py`), trends and summaries (`analysis_mixin.py`), events and map markers (`events_mixin.py`) and shared types (`common.py`). No behaviour change.
+- The frontend smoke test now opens the collapsible panels, so their content (and its escaping) is actually checked.
+
 ## 0.3.3 - 2026-10-30
 
 ### Fixed

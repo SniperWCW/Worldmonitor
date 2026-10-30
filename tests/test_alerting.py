@@ -16,7 +16,7 @@ if "lm" not in sys.modules:
 from lm import alerting  # noqa: E402
 
 
-def run(state, now=0.0, status="good", score=80, alerts=(), layers=(), drop=15, cooldown=3600.0):
+def run(state, now=0.0, status="good", score=80, alerts=(), layers=(), drop=15, cooldown=3600.0, route_delay=0):
     return alerting.detect(
         state,
         now=now,
@@ -26,6 +26,7 @@ def run(state, now=0.0, status="good", score=80, alerts=(), layers=(), drop=15, 
         layer_items=list(layers),
         drop_threshold=drop,
         cooldown_s=cooldown,
+        route_delay_min=route_delay,
     )
 
 
@@ -81,6 +82,18 @@ class AlertingTests(unittest.TestCase):
         item = {"layer": "radiation", "key": "odl:1", "title": "Mess", "value": 0.5}
         self.assertEqual(1, len(run(state, now=1, layers=[item])))
         self.assertEqual([], run(state, now=2, layers=[item]))
+
+    def test_route_delay_fires_once_for_new_jams_on_my_route(self):
+        state = alerting.AlertState()
+        run(state, route_delay=15)
+        jam = {"layer": "road", "kind": "warning", "key": "warning:1", "title": "A81 | X", "on_route": True, "delay_min": 20, "road": "A81"}
+        small = {**jam, "key": "warning:2", "delay_min": 5}
+        elsewhere = {**jam, "key": "warning:3", "on_route": False}
+        events = run(state, now=1, layers=[jam, small, elsewhere], route_delay=15)
+        self.assertEqual(["route_delay"], [e["type"] for e in events])
+        self.assertEqual(20, events[0]["delay_min"])
+        self.assertEqual([], run(state, now=2, layers=[jam], route_delay=15))
+        self.assertEqual([], run(state, now=3, layers=[{**jam, "key": "warning:9"}], route_delay=0))  # disabled
 
     def test_cooldown_suppresses_flapping(self):
         state = alerting.AlertState()

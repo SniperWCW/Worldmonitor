@@ -8,7 +8,9 @@ from pathlib import Path
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
+import voluptuous as vol
 
 from .const import CARD_RESOURCE_URL, DOMAIN, FRONTEND_BASE_URL
 
@@ -16,18 +18,37 @@ _LOGGER = logging.getLogger(__name__)
 FRONTEND_PATH = Path(__file__).resolve().parent / "frontend"
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
+SERVICE_TEST_ALERT = "test_alert"
+TEST_ALERT_SCHEMA = vol.Schema({vol.Optional("message", default=""): str})
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up shared frontend resources."""
     await _async_register_frontend(hass)
+    _async_register_services(hass)
     return True
+
+
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register ``lage_monitor.test_alert`` once."""
+    if hass.services.has_service(DOMAIN, SERVICE_TEST_ALERT):
+        return
+
+    async def _handle_test_alert(call: ServiceCall) -> None:
+        coordinators = [c for c in hass.data.get(DOMAIN, {}).values() if hasattr(c, "send_test_alert")]
+        if not coordinators:
+            raise ServiceValidationError("Lage Monitor ist nicht eingerichtet.")
+        for coordinator in coordinators:
+            coordinator.send_test_alert(call.data["message"])
+
+    hass.services.async_register(DOMAIN, SERVICE_TEST_ALERT, _handle_test_alert, schema=TEST_ALERT_SCHEMA)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Lage Monitor from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     await _async_register_frontend(hass)
+    _async_register_services(hass)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

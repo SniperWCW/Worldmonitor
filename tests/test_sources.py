@@ -16,6 +16,40 @@ if "lm" not in sys.modules:
 from lm.sources import autobahn, bfs, pegel  # noqa: E402
 
 
+class AutobahnRouteTests(unittest.TestCase):
+    def test_parse_routes(self):
+        routes = autobahn.parse_routes("A81 | Feuerbach, Böblingen\n# x\nA8\nkaputt | x\nB27 | y")
+        self.assertEqual([{"road": "A81", "keywords": ["feuerbach", "boeblingen"]}, {"road": "A8", "keywords": []}], routes)
+
+    def test_roads_to_fetch_merges_and_caps(self):
+        merged = autobahn.roads_to_fetch(["A8"], [{"road": "A81", "keywords": []}, {"road": "A8", "keywords": []}])
+        self.assertEqual(["A8", "A81"], merged)
+
+    def test_delay_and_speed_are_parsed(self):
+        payload = {"warning": [{
+            "identifier": "w", "title": "A81 | Stuttgart-Feuerbach - Ludwigsburg-Nord", "subtitle": "Stuttgart -> Heilbronn",
+            "coordinate": {"lat": 48.8, "long": 9.1},
+            "description": ["Beginn: heute", "Ereignismeldung: - Im Stillstand - Durchschnittsgeschwindigkeit: 25 km/h - Reisezeitverlust: 12 Minuten (zunehmend)"],
+        }]}
+        item = autobahn.normalize_traffic(payload, "A81", "warning")[0]
+        self.assertEqual(12, item["delay_min"])
+        self.assertEqual("12 Min. Verzögerung, Ø 25 km/h", item["detail"])
+
+    def test_mark_routes_matches_road_and_keywords_with_umlauts(self):
+        items = [
+            {"road": "A81", "title": "A81 | Böblingen/Sindelfingen - Ehningen", "subtitle": "", "detail": ""},
+            {"road": "A81", "title": "A81 | Heilbronn - Würzburg", "subtitle": "", "detail": ""},
+            {"road": "A8", "title": "A8 | Böblingen", "subtitle": "", "detail": ""},
+        ]
+        autobahn.mark_routes(items, autobahn.parse_routes("A81 | Boeblingen"))
+        self.assertEqual([True, False, False], [i["on_route"] for i in items])
+
+    def test_route_without_keywords_covers_whole_road(self):
+        items = [{"road": "A8", "title": "x", "subtitle": "", "detail": ""}]
+        autobahn.mark_routes(items, autobahn.parse_routes("A8"))
+        self.assertTrue(items[0]["on_route"])
+
+
 class AutobahnTests(unittest.TestCase):
     def test_parse_roads_validates_dedupes_and_caps(self):
         self.assertEqual(["A8", "A81"], autobahn.parse_roads("a8, A81 ; A8"))
@@ -104,6 +138,13 @@ class PegelTests(unittest.TestCase):
         self.assertEqual(2, items[0]["level"])
         self.assertEqual(2, items[0]["severity"])
         self.assertIn("Meldestufe 2", items[0]["detail"])
+
+    def test_always_mode_reports_calm_gauges_with_trend(self):
+        items = pegel.normalize_stations([station(250, self.MARKS)], min_level=0)
+        self.assertEqual(1, len(items))
+        self.assertEqual(0, items[0]["severity"])
+        self.assertIn("steigend", items[0]["detail"])
+        self.assertIn("unter Meldestufe 1", items[0]["detail"])
 
     def test_stations_without_marks_are_skipped(self):
         self.assertEqual([], pegel.normalize_stations([station(900, {})]))

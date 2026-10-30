@@ -21,6 +21,8 @@ Fetch = Callable[..., Awaitable[FetchResult]]  # (key, url, min_interval, max_st
 MAX_WEBCAMS = 40
 MAX_ROAD_ITEMS = 25
 MAX_WATER_ITEMS = 25
+NEAREST_GAUGES = 4  # always shown when "show gauges always" is on
+MAX_ROUTE_ITEMS = 15
 MAX_RADIATION_ITEMS = 15
 
 TRAFFIC_MIN_INTERVAL = 300
@@ -33,12 +35,14 @@ LAYER_MAX_STALE = 3 * 3600
 @dataclass(frozen=True, slots=True)
 class LayerConfig:
     autobahn_roads: tuple[str, ...] = ()
+    routes: tuple[dict, ...] = ()
     water: bool = False
+    water_always: bool = False
     radiation: bool = False
 
     @property
     def any_enabled(self) -> bool:
-        return bool(self.autobahn_roads) or self.water or self.radiation
+        return bool(self.autobahn_roads) or bool(self.routes) or self.water or self.radiation
 
 
 def _aggregate_status(results: list[FetchResult], items: int) -> dict[str, Any]:
@@ -89,7 +93,9 @@ def _dedupe_measures(items: list[dict]) -> list[dict]:
 
 
 async def _fetch_autobahn(cfg, home, radius_km, fetch: Fetch):
-    jobs = [(road, kind) for road in cfg.autobahn_roads for kind in ("webcam", "closure", "warning")]
+    routes = list(cfg.routes)
+    roads = autobahn.roads_to_fetch(list(cfg.autobahn_roads), routes)
+    jobs = [(road, kind) for road in roads for kind in ("webcam", "closure", "warning")]
     results = await asyncio.gather(
         *(
             fetch(
@@ -110,22 +116,49 @@ async def _fetch_autobahn(cfg, home, radius_km, fetch: Fetch):
             cams.extend(autobahn.normalize_webcams(result.value, road))
         else:
             traffic.extend(autobahn.normalize_traffic(result.value, road, kind))
-    cams = sorted(_within(cams, home, radius_km), key=lambda i: i.get("distance_km", 0))[:MAX_WEBCAMS]
-    traffic = _within(traffic, home, radius_km * 2)
-    traffic = [i for i in traffic if i["severity"] > 0]  # announced future works are noise
-    traffic.sort(key=lambda i: (-i["severity"], i.get("distance_km", 0)))
-    traffic = _dedupe_measures(traffic)
-    items = cams + traffic[:MAX_ROAD_ITEMS]
+    cams = autobahn.mark_routes(cams, routes)
+    traffic = autobahn.mark_routes(traffic, routes)
+    for item in traffic:
+        item.pop("detail_full", None)  # only needed for route matching
+
+    # Items on the user's routes are kept regardless of the radius.
+    def split(items, wide_radius):
+        on_route = [i for i in items if i.get("on_route")]
+        rest = [i for i in items if not i.get("on_route")]
+        near = _within(rest, home, wide_radius)
+        for item in on_route:
+            if home[0] is not None and home[1] is not None:
+                item["distance_km"] = round(_distance(home, item), 1)
+        return on_route, near
+
+    route_cams, near_cams = split(cams, radius_km)
+    route_traffic, near_traffic = split(traffic, radius_km * 2)
+    near_cams = sorted(near_cams, key=lambda i: i.get("distance_km", 0))[:MAX_WEBCAMS]
+    route_traffic = [i for i in route_traffic if i["severity"] > 0]
+    near_traffic = [i for i in near_traffic if i["severity"] > 0]  # announced future works are noise
+    key = lambda i: (-i["severity"], i.get("distance_km", 0))  # noqa: E731
+    route_traffic = _dedupe_measures(sorted(route_traffic, key=key))[:MAX_ROUTE_ITEMS]
+    near_traffic = _dedupe_measures(sorted(near_traffic, key=key))[:MAX_ROAD_ITEMS]
+    seen = {i["key"] for i in route_traffic}
+    items = route_cams + [c for c in near_cams if c["key"] not in {x["key"] for x in route_cams}]
+    items += route_traffic + [i for i in near_traffic if i["key"] not in seen]
     return items, _aggregate_status(list(results), len(items))
 
 
-async def _fetch_water(home, radius_km, fetch: Fetch):
+async def _fetch_water(home, radius_km, fetch: Fetch, always: bool = False):
     if home[0] is None or home[1] is None:
         return [], {"ok": True, "items": 0, "error": "Home-Position fehlt", "state": "fresh", "stale": False}
     result = await fetch(
         "layer:pegel", pegel.stations_url(home[0], home[1], radius_km), WATER_MIN_INTERVAL, LAYER_MAX_STALE
     )
-    items = pegel.normalize_stations(result.value)[:MAX_WATER_ITEMS] if result.value is not None else []
+    if result.value is None:
+        return [], _aggregate_status([result], 0)
+    api_radius = min(max(radius_km, 10), 100)
+    items = _within(pegel.normalize_stations(result.value, min_level=0 if always else 1), home, api_radius)
+    items.sort(key=lambda i: (-i["severity"], i.get("distance_km", 0)))
+    flooded = [i for i in items if i["severity"] > 0]
+    calm = [i for i in items if i["severity"] == 0][:NEAREST_GAUGES] if always else []
+    items = (flooded + calm)[:MAX_WATER_ITEMS]
     return items, _aggregate_status([result], len(items))
 
 
@@ -149,12 +182,12 @@ async def fetch_layers(
         return [], {}
     names: list[str] = []
     jobs = []
-    if cfg.autobahn_roads:
+    if cfg.autobahn_roads or cfg.routes:
         names.append("autobahn")
         jobs.append(_fetch_autobahn(cfg, home, radius_km, fetch))
     if cfg.water:
         names.append("pegelonline")
-        jobs.append(_fetch_water(home, radius_km, fetch))
+        jobs.append(_fetch_water(home, radius_km, fetch, cfg.water_always))
     if cfg.radiation:
         names.append("bfs_odl")
         jobs.append(_fetch_radiation(home, radius_km, fetch))

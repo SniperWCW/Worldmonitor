@@ -27,7 +27,10 @@
           "live_streams": "Live streams and cameras",
           "alert_notify_service": "Notify service for situation events",
           "alert_score_drop": "Event when the score drops by at least … points",
-          "alert_cooldown_min": "Cooldown per event in minutes"
+          "alert_cooldown_min": "Cooldown per event in minutes",
+          "autobahn_routes": "My routes (autobahn | keywords)",
+          "water_always": "Always show nearest gauges",
+          "alert_route_delay": "Event for delays on my routes from … minutes"
         },
         "data_description": {
           "autobahn_roads": "Comma separated, e.g. A8, A81 (max 8). Empty = off. Webcams are still images.",
@@ -36,7 +39,10 @@
           "live_streams": "One entry per line: Name | URL or camera.entity | optional region. Supports YouTube links, .m3u8, image URLs and camera.* entities.",
           "alert_notify_service": "Optional, e.g. notify.mobile_app_my_phone. The lage_monitor_alert event is always fired.",
           "alert_score_drop": "0 = off. Compared with the previous refresh.",
-          "alert_cooldown_min": "Identical events are not reported again within this time."
+          "alert_cooldown_min": "Identical events are not reported again within this time.",
+          "autobahn_routes": "One line per route, e.g. A81 | Feuerbach, Ludwigsburg. Keywords are exits or places from the reports; without keywords the whole autobahn counts. Reports and webcams on your routes are shown even outside the radius.",
+          "water_always": "Shows the nearest gauges in the radius with water level and trend, even below flood mark 1. Only applies when water levels are enabled.",
+          "alert_route_delay": "0 = off. Reports new traffic jams on your routes from this delay on."
         }
       }
     }
@@ -69,7 +75,10 @@
           "live_streams": "Live streams and cameras",
           "alert_notify_service": "Notify service for situation events",
           "alert_score_drop": "Event when the score drops by at least … points",
-          "alert_cooldown_min": "Cooldown per event in minutes"
+          "alert_cooldown_min": "Cooldown per event in minutes",
+          "autobahn_routes": "My routes (autobahn | keywords)",
+          "water_always": "Always show nearest gauges",
+          "alert_route_delay": "Event for delays on my routes from … minutes"
         },
         "data_description": {
           "nina_ars": "No longer needed for warnung.bund.de and can be left empty.",
@@ -91,7 +100,10 @@
           "live_streams": "One entry per line: Name | URL or camera.entity | optional region. Supports YouTube links, .m3u8, image URLs and camera.* entities.",
           "alert_notify_service": "Optional, e.g. notify.mobile_app_my_phone. The lage_monitor_alert event is always fired.",
           "alert_score_drop": "0 = off. Compared with the previous refresh.",
-          "alert_cooldown_min": "Identical events are not reported again within this time."
+          "alert_cooldown_min": "Identical events are not reported again within this time.",
+          "autobahn_routes": "One line per route, e.g. A81 | Feuerbach, Ludwigsburg. Keywords are exits or places from the reports; without keywords the whole autobahn counts. Reports and webcams on your routes are shown even outside the radius.",
+          "water_always": "Shows the nearest gauges in the radius with water level and trend, even below flood mark 1. Only applies when water levels are enabled.",
+          "alert_route_delay": "0 = off. Reports new traffic jams on your routes from this delay on."
         }
       }
     }
@@ -121,6 +133,18 @@
       },
       "diagnostic_state": {
         "name": "Lage Monitor diagnostics"
+      }
+    }
+  },
+  "services": {
+    "test_alert": {
+      "name": "Send test alert",
+      "description": "Fires the lage_monitor_alert event with type test and forwards it to the configured notify service. Use it to check automations and push notifications.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "Text of the test alert (optional)."
+        }
       }
     }
   }

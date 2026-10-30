@@ -11,6 +11,7 @@ from typing import Any
 
 from . import LAYER_WATER, first_list, to_float, valid_point
 
+TREND_TEXT = {-1: "fallend", 0: "gleichbleibend", 1: "steigend"}
 PEGEL_BASE_URL = "https://www.pegelonline.wsv.de/webservices/rest-api/v2"
 
 
@@ -69,12 +70,21 @@ def normalize_stations(payload: Any, *, min_level: int = 1) -> list[dict]:
         water = station.get("water") if isinstance(station.get("water"), dict) else {}
         name = str(station.get("longname") or station.get("shortname") or "Pegel").title()
         unit = str(series.get("unit") or "cm")
+        has_marks = bool(marks)
+        detail = f"Wasserstand {value:g} {unit}"
+        trend = TREND_TEXT.get(measurement.get("trend"))
+        if trend:
+            detail += f", {trend}"
+        if level > 0:
+            detail += f", Meldestufe {level}"
+        elif has_marks:
+            detail += ", unter Meldestufe 1"
         items.append(
             {
                 "layer": LAYER_WATER,
                 "key": f"pegel:{station.get('uuid') or name}",
                 "title": f"{name} ({str(water.get('longname') or '').title()})".replace(" ()", ""),
-                "detail": f"Wasserstand {value:g} {unit}, Meldestufe {level}",
+                "detail": detail,
                 "level": level,
                 "value": value,
                 "unit": unit,

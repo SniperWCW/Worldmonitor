@@ -27,7 +27,10 @@
           "live_streams": "Live-Streams und Kameras",
           "alert_notify_service": "Benachrichtigungsdienst für Lage-Ereignisse",
           "alert_score_drop": "Ereignis bei Lagewert-Abfall um mindestens … Punkte",
-          "alert_cooldown_min": "Sperrzeit pro Ereignis in Minuten"
+          "alert_cooldown_min": "Sperrzeit pro Ereignis in Minuten",
+          "autobahn_routes": "Meine Strecken (Autobahn | Stichwörter)",
+          "water_always": "Nächste Pegel immer anzeigen",
+          "alert_route_delay": "Ereignis bei Verzögerung auf meinen Strecken ab … Minuten"
         },
         "data_description": {
           "autobahn_roads": "Kommagetrennt, zum Beispiel A8, A81 (max. 8). Leer = aus. Webcams sind Standbilder.",
@@ -36,7 +39,10 @@
           "live_streams": "Eine Zeile pro Eintrag: Name | URL oder camera.entity | optional Region. Unterstützt YouTube-Links, .m3u8, Bild-URLs und camera.*-Entitäten.",
           "alert_notify_service": "Optional, zum Beispiel notify.mobile_app_mein_handy. Das Ereignis lage_monitor_alert wird immer gefeuert.",
           "alert_score_drop": "0 = aus. Vergleich mit dem vorherigen Aktualisierungslauf.",
-          "alert_cooldown_min": "Gleiche Ereignisse werden in dieser Zeit nicht erneut gemeldet."
+          "alert_cooldown_min": "Gleiche Ereignisse werden in dieser Zeit nicht erneut gemeldet.",
+          "autobahn_routes": "Eine Zeile pro Strecke, zum Beispiel: A81 | Feuerbach, Ludwigsburg. Stichwörter sind Anschlussstellen oder Orte aus den Meldungen; ohne Stichwörter zählt die ganze Autobahn. Meldungen und Webcams der Strecken werden auch außerhalb des Umkreises gezeigt.",
+          "water_always": "Zeigt die nächsten Pegel im Umkreis mit Wasserstand und Trend, auch unter Meldestufe 1. Wirkt nur mit aktivierten Pegelständen.",
+          "alert_route_delay": "0 = aus. Meldet neue Staus auf deinen Strecken ab dieser Verzögerung."
         }
       }
     }
@@ -69,7 +75,10 @@
           "live_streams": "Live-Streams und Kameras",
           "alert_notify_service": "Benachrichtigungsdienst für Lage-Ereignisse",
           "alert_score_drop": "Ereignis bei Lagewert-Abfall um mindestens … Punkte",
-          "alert_cooldown_min": "Sperrzeit pro Ereignis in Minuten"
+          "alert_cooldown_min": "Sperrzeit pro Ereignis in Minuten",
+          "autobahn_routes": "Meine Strecken (Autobahn | Stichwörter)",
+          "water_always": "Nächste Pegel immer anzeigen",
+          "alert_route_delay": "Ereignis bei Verzögerung auf meinen Strecken ab … Minuten"
         },
         "data_description": {
           "nina_ars": "Wird für warnung.bund.de nicht mehr benötigt und kann leer bleiben.",
@@ -91,7 +100,10 @@
           "live_streams": "Eine Zeile pro Eintrag: Name | URL oder camera.entity | optional Region. Unterstützt YouTube-Links, .m3u8, Bild-URLs und camera.*-Entitäten.",
           "alert_notify_service": "Optional, zum Beispiel notify.mobile_app_mein_handy. Das Ereignis lage_monitor_alert wird immer gefeuert.",
           "alert_score_drop": "0 = aus. Vergleich mit dem vorherigen Aktualisierungslauf.",
-          "alert_cooldown_min": "Gleiche Ereignisse werden in dieser Zeit nicht erneut gemeldet."
+          "alert_cooldown_min": "Gleiche Ereignisse werden in dieser Zeit nicht erneut gemeldet.",
+          "autobahn_routes": "Eine Zeile pro Strecke, zum Beispiel: A81 | Feuerbach, Ludwigsburg. Stichwörter sind Anschlussstellen oder Orte aus den Meldungen; ohne Stichwörter zählt die ganze Autobahn. Meldungen und Webcams der Strecken werden auch außerhalb des Umkreises gezeigt.",
+          "water_always": "Zeigt die nächsten Pegel im Umkreis mit Wasserstand und Trend, auch unter Meldestufe 1. Wirkt nur mit aktivierten Pegelständen.",
+          "alert_route_delay": "0 = aus. Meldet neue Staus auf deinen Strecken ab dieser Verzögerung."
         }
       }
     }
@@ -121,6 +133,18 @@
       },
       "diagnostic_state": {
         "name": "Lage Monitor Diagnose"
+      }
+    }
+  },
+  "services": {
+    "test_alert": {
+      "name": "Testmeldung senden",
+      "description": "Löst das Ereignis lage_monitor_alert mit dem Typ test aus und meldet es an den eingestellten Benachrichtigungsdienst. Zum Prüfen von Automationen und Push-Nachrichten.",
+      "fields": {
+        "message": {
+          "name": "Nachricht",
+          "description": "Text der Testmeldung (optional)."
+        }
       }
     }
   }

@@ -8,6 +8,7 @@ not video streams.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from . import LAYER_ROAD, LAYER_WEBCAMS, first_list, https_url, to_float, valid_point
@@ -15,6 +16,61 @@ from . import LAYER_ROAD, LAYER_WEBCAMS, first_list, https_url, to_float, valid_
 AUTOBAHN_BASE_URL = "https://verkehr.autobahn.de/o/autobahn"
 ROAD_RE = re.compile(r"^A\d{1,3}$")
 MAX_ROADS = 8  # 3 requests per road; keep the load on the public API small
+MAX_ROUTES = 8
+DELAY_RE = re.compile(r"Reisezeitverlust:\s*(\d+)\s*Minuten")
+SPEED_RE = re.compile(r"Durchschnittsgeschwindigkeit:\s*(\d+)\s*km/h")
+
+
+def _fold(text: str) -> str:
+    """Lower-case and strip diacritics so "Böblingen" matches "boeblingen"/"Boblingen"."""
+    text = str(text or "").lower().replace("ß", "ss")
+    for src, dst in (("ä", "ae"), ("ö", "oe"), ("ü", "ue")):
+        text = text.replace(src, dst)
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+
+
+def parse_routes(raw: str) -> list[dict]:
+    """Parse lines like ``A81 | Feuerbach, Ludwigsburg`` into road + folded keywords.
+
+    Without keywords the whole road counts as a route.
+    """
+    routes: list[dict] = []
+    for line in str(raw or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        road, _, rest = line.partition("|")
+        road = road.strip().upper()
+        if not ROAD_RE.match(road):
+            continue
+        keywords = [k for k in (_fold(part).strip() for part in rest.split(",")) if k]
+        routes.append({"road": road, "keywords": keywords})
+        if len(routes) >= MAX_ROUTES:
+            break
+    return routes
+
+
+def roads_to_fetch(roads: list[str], routes: list[dict]) -> list[str]:
+    """Configured roads plus the roads of all routes (deduplicated, capped)."""
+    merged = list(roads)
+    for route in routes:
+        if route["road"] not in merged:
+            merged.append(route["road"])
+    return merged[:MAX_ROADS]
+
+
+def mark_routes(items: list[dict], routes: list[dict]) -> list[dict]:
+    """Set ``on_route`` on items that belong to one of the user's routes."""
+    if not routes:
+        return items
+    for item in items:
+        haystack = _fold(f"{item.get('title', '')} {item.get('subtitle', '')} {item.get('detail_full', item.get('detail', ''))}")
+        item["on_route"] = any(
+            route["road"] == item.get("road")
+            and (not route["keywords"] or any(k in haystack for k in route["keywords"]))
+            for route in routes
+        )
+    return items
 
 
 def parse_roads(raw: str) -> list[str]:
@@ -85,13 +141,27 @@ def normalize_traffic(payload: Any, road: str, kind: str) -> list[dict]:
         if raw.get("future") in (True, "true"):
             severity = 0  # announced, not in effect yet
         title = _text(raw.get("title")) or road
+        full_text = _text(raw.get("description"))
+        delay = DELAY_RE.search(full_text)
+        speed = SPEED_RE.search(full_text)
+        if kind == "warning" and (delay or speed):
+            parts = []
+            if delay:
+                parts.append(f"{delay.group(1)} Min. Verzögerung")
+            if speed:
+                parts.append(f"Ø {speed.group(1)} km/h")
+            detail = ", ".join(parts)
+        else:
+            detail = full_text[:200]
         items.append(
             {
                 "layer": LAYER_ROAD,
                 "key": f"{kind}:{raw.get('identifier') or (lat, lon, title)}",
                 "title": title,
                 "subtitle": _text(raw.get("subtitle")),
-                "detail": _text(raw.get("description"))[:200],
+                "detail": detail,
+                "detail_full": full_text[:600],
+                "delay_min": int(delay.group(1)) if delay else None,
                 "kind": kind,
                 "road": road,
                 "latitude": lat,

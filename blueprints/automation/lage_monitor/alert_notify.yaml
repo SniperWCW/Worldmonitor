@@ -1,0 +1,70 @@
+blueprint:
+  name: Lage Monitor – Ereignis melden
+  description: >
+    Führt eine Aktion aus, wenn der Lage Monitor ein Ereignis meldet
+    (Lage verschlechtert, neue Warnung, Hochwasser, Strahlung, Stau auf deiner Strecke).
+    In der Aktion steht der Text als {{ trigger.event.data.title }} zur Verfügung.
+    Mit dem Dienst lage_monitor.test_alert kannst du die Automation ausprobieren.
+  domain: automation
+  source_url: https://github.com/SniperWCW/Worldmonitor/blob/master/blueprints/automation/lage_monitor/alert_notify.yaml
+  input:
+    notify_action:
+      name: Aktion
+      description: >
+        Was soll passieren? Zum Beispiel "Benachrichtigung senden" an dein Handy
+        mit der Nachricht {{ trigger.event.data.title }}.
+      selector:
+        action: {}
+    event_types:
+      name: Ereignistypen
+      description: Testmeldungen werden immer durchgelassen.
+      default:
+        - status_change
+        - score_drop
+        - new_official_alert
+        - flood_level
+        - radiation_elevated
+        - route_delay
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Lage-Status wechselt
+              value: status_change
+            - label: Lagewert fällt stark
+              value: score_drop
+            - label: Neue amtliche Warnung
+              value: new_official_alert
+            - label: Hochwasser-Meldestufe
+              value: flood_level
+            - label: Erhöhte Strahlung
+              value: radiation_elevated
+            - label: Stau auf meiner Strecke
+              value: route_delay
+    only_worse:
+      name: Nur Verschlechterungen
+      description: Entspannungen ("Lage entspannt") nicht melden.
+      default: true
+      selector:
+        boolean: {}
+
+mode: queued
+max_exceeded: silent
+
+variables:
+  event_types: !input event_types
+  only_worse: !input only_worse
+
+triggers:
+  - trigger: event
+    event_type: lage_monitor_alert
+
+conditions:
+  - condition: template
+    value_template: >
+      {% set d = trigger.event.data %}
+      {{ d.type == 'test'
+         or (d.type in event_types
+             and (not only_worse or d.direction != 'better')) }}
+
+actions: !input notify_action

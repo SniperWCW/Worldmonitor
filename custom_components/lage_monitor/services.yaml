@@ -1,0 +1,7 @@
+test_alert:
+  fields:
+    message:
+      required: false
+      example: "Testmeldung"
+      selector:
+        text:

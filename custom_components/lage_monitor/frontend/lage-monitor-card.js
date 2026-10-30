@@ -580,6 +580,41 @@ const CARD_STYLE = `
     background: rgba(255, 255, 255, 0.84);
     font-size: 0.82rem;
   }
+  .route-badge {
+    margin-left: 8px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.12);
+    color: var(--primary-color, #2563eb);
+    font-size: 0.68rem;
+    font-weight: 750;
+  }
+  .cam-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .cam {
+    margin: 0;
+  }
+  .cam img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.08);
+    object-fit: cover;
+  }
+  .cam figcaption {
+    margin-top: 4px;
+    font-size: 0.74rem;
+    line-height: 1.3;
+  }
+  .cam figcaption small {
+    display: block;
+    color: var(--secondary-text-color);
+  }
   .live-list {
     display: flex;
     flex-wrap: wrap;
@@ -1944,12 +1979,28 @@ function renderInfraList(items) {
       .filter(Boolean).map(escapeHtml).join(" · ");
     return `
       <div class="item">
-        <div class="item-top"><span class="source">${escapeHtml(SEVERITY_TEXT[severity])}</span></div>
+        <div class="item-top"><span class="source">${escapeHtml(SEVERITY_TEXT[severity])}</span>${item.on_route ? `<span class="route-badge">Meine Strecke</span>` : ""}</div>
         <div class="link">${escapeHtml(item.title || "Eintrag")}</div>
         ${item.detail ? `<div class="summary alert-summary">${escapeHtml(item.detail)}</div>` : ""}
         <div class="item-meta">${meta}</div>
       </div>`;
   }).join("")}</div>`;
+}
+
+function renderRouteCams(cams) {
+  if (!cams.length) {
+    return "";
+  }
+  return `
+    <div class="split-section-title" style="margin-top:14px">Kameras auf deinen Strecken</div>
+    <div class="cam-grid">${cams.map((cam) => {
+      const image = safeHttpLink(cam.image);
+      return image ? `
+        <figure class="cam">
+          <img src="${escapeHtml(image)}" alt="${escapeHtml(cam.title || "Webcam")}" loading="lazy" referrerpolicy="no-referrer">
+          <figcaption>${escapeHtml(cam.title || "Webcam")}${cam.subtitle ? `<small>${escapeHtml(cam.subtitle)}</small>` : ""}</figcaption>
+        </figure>` : "";
+    }).join("")}</div>`;
 }
 
 function renderLiveBody(streams, selected) {
@@ -2113,6 +2164,7 @@ class LageMonitorCard extends HTMLElement {
     const layerItems = focus === "world" ? [] : (Array.isArray(attrs.layer_items) ? attrs.layer_items : []);
     const liveStreams = Array.isArray(attrs.live_streams) ? attrs.live_streams : [];
     const infraItems = layerItems.filter((item) => item.layer !== "webcams");
+    const routeCams = layerItems.filter((item) => item.layer === "webcams" && item.on_route);
     this._layerItems = layerItems;
     this._liveStreams = liveStreams;
 
@@ -2201,11 +2253,11 @@ class LageMonitorCard extends HTMLElement {
                 this._panelState.map
               )}
             ` : ""}
-            ${infraItems.length ? renderCollapsiblePanel(
+            ${infraItems.length || routeCams.length ? renderCollapsiblePanel(
               "infra",
               "Verkehr, Pegel &amp; Messwerte",
-              `${infraItems.length}`,
-              renderInfraList(infraItems),
+              `${infraItems.length + routeCams.length}`,
+              `${infraItems.length ? renderInfraList(infraItems) : `<div class="empty">Keine Meldungen.</div>`}${renderRouteCams(routeCams)}`,
               this._panelState.infra
             ) : ""}
             ${liveStreams.length ? renderCollapsiblePanel(

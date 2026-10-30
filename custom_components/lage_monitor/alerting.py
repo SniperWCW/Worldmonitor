@@ -17,6 +17,8 @@ TYPE_DROP = "score_drop"
 TYPE_OFFICIAL = "new_official_alert"
 TYPE_FLOOD = "flood_level"
 TYPE_RADIATION = "radiation_elevated"
+TYPE_ROUTE = "route_delay"
+TYPE_TEST = "test"
 
 STATUS_RANK = {"good": 0, "medium": 1, "bad": 2}
 STATUS_LABEL = {"good": "Ruhig", "medium": "Aufmerksam", "bad": "Belastet"}
@@ -32,6 +34,7 @@ class AlertState:
     local_alert_keys: set[str] = field(default_factory=set)
     flood_levels: dict[str, int] = field(default_factory=dict)
     radiation_keys: set[str] = field(default_factory=set)
+    route_keys: set[str] = field(default_factory=set)
     last_fired: dict[str, float] = field(default_factory=dict)
 
 
@@ -49,6 +52,7 @@ def detect(
     layer_items: list[dict],
     drop_threshold: int,
     cooldown_s: float,
+    route_delay_min: int = 0,
 ) -> list[dict[str, Any]]:
     """Return new events and update ``state``. Pure apart from mutating ``state``."""
     events: list[dict[str, Any]] = []
@@ -63,6 +67,14 @@ def detect(
     alert_keys = {alert_key(a) for a in local_alerts}
     flood = {i["key"]: int(i.get("level") or 0) for i in layer_items if i.get("layer") == "water"}
     radiation = {i["key"] for i in layer_items if i.get("layer") == "radiation"}
+    route_jams = {
+        i["key"]: i
+        for i in layer_items
+        if route_delay_min > 0
+        and i.get("on_route")
+        and i.get("kind") == "warning"
+        and (i.get("delay_min") or 0) >= route_delay_min
+    }
 
     if state.seeded:
         if status != state.status and status in STATUS_RANK and state.status in STATUS_RANK:
@@ -115,6 +127,17 @@ def detect(
                         "detail": item.get("detail", ""),
                     },
                 )
+            if item.get("on_route") and item["key"] in route_jams and item["key"] not in state.route_keys:
+                emit(
+                    f"route:{item['key']}",
+                    {
+                        "type": TYPE_ROUTE,
+                        "direction": "worse",
+                        "title": f"Stau auf deiner Strecke: {item['title']} ({item.get('delay_min')} Min.)",
+                        "road": item.get("road", ""),
+                        "delay_min": item.get("delay_min"),
+                    },
+                )
             if item.get("layer") == "radiation" and item["key"] not in state.radiation_keys:
                 emit(
                     f"radiation:{item['key']}",
@@ -132,6 +155,7 @@ def detect(
     state.local_alert_keys = alert_keys
     state.flood_levels = flood
     state.radiation_keys = radiation
+    state.route_keys = set(route_jams)
     for key in [k for k, t in state.last_fired.items() if now - t > max(cooldown_s * 4, 86400)]:
         del state.last_fired[key]
     return events

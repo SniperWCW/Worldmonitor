@@ -11,7 +11,7 @@ global.customElements = {
 global.window = {
   customCards: [],
   localStorage: {
-    getItem() { return null; },
+    getItem() { return JSON.stringify({ infra: true, live: true }); },
     setItem() {}
   },
   setTimeout() {}
@@ -82,7 +82,8 @@ card.hass = {
         top_keywords: [],
         layer_items: [
           { layer: "road", key: "closure:1", title: "A8 | <b>Sperrung</b>", detail: "Vollsperrung", severity: 2, road: "A8", latitude: 48.8, longitude: 9.0, distance_km: 12.3 },
-          { layer: "webcams", key: "webcam:1", title: "Cam", image: "javascript:alert(1)", severity: 0, latitude: 48.8, longitude: 9.0 }
+          { layer: "webcams", key: "webcam:1", title: "Cam", image: "javascript:alert(1)", severity: 0, latitude: 48.8, longitude: 9.0 },
+          { layer: "webcams", key: "webcam:2", title: "Route <u>Cam</u>", image: "https://example.org/a.jpg", on_route: true, severity: 0, latitude: 48.8, longitude: 9.0 }
         ],
         live_streams: [
           { label: "Tagesschau <i>24</i>", type: "youtube", url: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", region: "DE" },
@@ -108,6 +109,10 @@ assert.match(html, /Lage &lt;Monitor&gt;/);
 
 assert.match(html, /Verkehr, Pegel &amp; Messwerte/);
 assert.match(html, /Live &amp; Kameras/);
+assert.match(html, /Kameras auf deinen Strecken/);
+assert.match(html, /src="https:\/\/example.org\/a.jpg"/);
+assert.doesNotMatch(html, /<u>Cam<\/u>/);
+assert.doesNotMatch(html, /javascript:alert\(1\)" alt/);
 assert.doesNotMatch(html, /<b>Sperrung<\/b>/);
 assert.doesNotMatch(html, /<i>24<\/i>/);
 

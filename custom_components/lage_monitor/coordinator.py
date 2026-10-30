@@ -5,17 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass, field, replace
+from dataclasses import field, replace
 from datetime import timedelta
 from email.utils import parsedate_to_datetime
-import html
-import logging
 import math
 import re
 import time
 from typing import Any
 import unicodedata
-from urllib.parse import quote
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -25,6 +22,9 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ALERT_COOLDOWN_MIN,
+    CONF_ALERT_ROUTE_DELAY,
+    CONF_AUTOBAHN_ROUTES,
+    CONF_WATER_ALWAYS,
     CONF_ALERT_NOTIFY_SERVICE,
     CONF_ALERT_RADIUS_KM,
     CONF_ALERT_SCORE_DROP,
@@ -48,6 +48,9 @@ from .const import (
     CONF_WARN_MOWAS,
     CONF_WARN_POLICE,
     DEFAULT_ALERT_COOLDOWN_MIN,
+    DEFAULT_ALERT_ROUTE_DELAY,
+    DEFAULT_AUTOBAHN_ROUTES,
+    DEFAULT_WATER_ALWAYS,
     DEFAULT_ALERT_NOTIFY_SERVICE,
     DEFAULT_ALERT_RADIUS_KM,
     DEFAULT_ALERT_SCORE_DROP,
@@ -64,113 +67,42 @@ from .const import (
     DEFAULT_WARN_MOWAS,
     DEFAULT_WARN_POLICE,
     DOMAIN,
-    EONET_EVENTS_API_URL,
-    ALERTS_MAX_STALE,
-    ALERTS_MIN_INTERVAL,
-    DETAIL_MAX_STALE,
-    DETAIL_MIN_INTERVAL,
-    EVENTS_MAX_STALE,
-    EVENTS_MIN_INTERVAL,
     FEED_MAX_STALE,
     FEED_MIN_INTERVAL_NEWS,
     FEED_MIN_INTERVAL_POLICE,
     FETCH_CONCURRENCY,
     FOCUS_MODE_LOCAL,
     UPDATE_FAILURES_BEFORE_UNAVAILABLE,
-    GERMANY_BBOX,
     GERMAN_NEWS_FEEDS,
     NATIONAL_PRIORITY_KEYWORDS,
     POLICE_COUNT_MODE_ALL,
     PRESSEPORTAL_FEEDS,
-    USGS_EARTHQUAKE_FEED_URL,
-    WARNUNG_BUND_ASSETS_BASE_URL,
-    WARNUNG_BUND_BASE_URL,
 )
 from . import alerting, geo, geometry
-from .feed import FeedItem, fetch_feed, fetch_json, fetch_json_conditional, iso_timestamp
+from .feed import (
+    FeedItem,
+    fetch_feed,
+    fetch_json_conditional,
+    iso_timestamp,
+)
 from .fetchcache import FetchResult, ResilientCache, SourcePolicy
 from .layers import LayerConfig, fetch_layers
 from .live import parse_streams
-from .sources.autobahn import parse_roads
-from .scoring import aggregate_risk, baseline_deviation, cluster_items, score_text
-
-_LOGGER = logging.getLogger(__name__)
-COORD_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
-OFFICIAL_ALERT_SOURCES = {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}
-SCORE_HISTORY_VERSION = 4
-THEME_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "security": (
-        "anschlag", "terror", "angriff", "gewalt", "amok", "geisel",
-        "schuesse", "schüsse", "messer", "explosion", "unruhen", "ausschreit",
-    ),
-    "infrastructure": (
-        "ausfall", "blackout", "strom", "energie", "wasser", "trinkwasser",
-        "bahn", "brücke", "bruecke", "verkehr", "netz", "internet", "versorgung",
-    ),
-    "nature": (
-        "erdbeben", "hochwasser", "überschwemm", "ueberschwemm", "sturm",
-        "orkan", "waldbrand", "wildfire", "hitz", "glatteis", "schnee", "vulkan",
-    ),
-}
+from .sources.autobahn import parse_roads, parse_routes
+from .scoring import score_text
+from .analysis_mixin import AnalysisMixin
+from .common import (
+    COORD_RE,
+    LageSnapshot,
+    SCORE_HISTORY_VERSION,
+    _LOGGER,
+    _assessment_status,
+)
+from .events_mixin import EventsMixin
+from .warnings_mixin import WarningsMixin
 
 
-def _assessment_status(score: int) -> dict[str, str]:
-    """Return the shared status thresholds used by backend and card."""
-    if score >= 70:
-        return {"key": "good", "label": "Ruhig"}
-    if score >= 40:
-        return {"key": "medium", "label": "Aufmerksam"}
-    return {"key": "bad", "label": "Belastet"}
-
-
-@dataclass(slots=True)
-class LageSnapshot:
-    """Current aggregated situation."""
-
-    germany_score: int
-    global_score: int
-    local_score: int
-    active_alerts: int
-    police_items: int
-    high_priority_items: int
-    military_signal_score: int
-    military_signal_germany: int
-    military_signal_world: int
-    stability_index: int
-    germany_risk_score: int
-    global_risk_score: int
-    local_risk_score: int
-    headlines: list[dict]
-    local_headlines: list[dict]
-    germany_headlines: list[dict]
-    world_headlines: list[dict]
-    alerts: list[dict]
-    local_alerts: list[dict]
-    map_markers: list[dict]
-    military_items: list[dict]
-    military_items_germany: list[dict]
-    military_items_local: list[dict]
-    military_items_world: list[dict]
-    top_keywords: list[dict]
-    sources: list[str]
-    source_status: dict[str, dict]
-    diagnostics: dict[str, str | int | bool]
-    last_update: str
-    score_breakdown: dict[str, int]
-    analysis_summary: dict[str, Any]
-    risk_drivers: list[dict]
-    score_trend: dict[str, str | int]
-    risk_components: dict[str, dict[str, int]]
-    history_summary: dict[str, dict[str, Any]]
-    source_freshness: list[dict[str, str | int | None | bool]]
-    data_quality: dict[str, Any]
-    theme_scores: dict[str, dict[str, dict[str, int]]]
-    scope_counts: dict[str, dict[str, int]]
-    layer_items: list[dict] = field(default_factory=list)
-    live_streams: list[dict] = field(default_factory=list)
-
-
-class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
+class LageMonitorCoordinator(WarningsMixin, AnalysisMixin, EventsMixin, DataUpdateCoordinator[LageSnapshot]):
     """Coordinator for data aggregation."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -702,7 +634,9 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         """Fetch the optional map layers (Autobahn, water levels, radiation)."""
         cfg = LayerConfig(
             autobahn_roads=tuple(parse_roads(self._option(CONF_AUTOBAHN_ROADS, DEFAULT_AUTOBAHN_ROADS))),
+            routes=tuple(parse_routes(self._option(CONF_AUTOBAHN_ROUTES, DEFAULT_AUTOBAHN_ROUTES))),
             water=bool(self._option(CONF_LAYER_WATER, DEFAULT_LAYER_WATER)),
+            water_always=bool(self._option(CONF_WATER_ALWAYS, DEFAULT_WATER_ALWAYS)),
             radiation=bool(self._option(CONF_LAYER_RADIATION, DEFAULT_LAYER_RADIATION)),
         )
 
@@ -729,746 +663,40 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
                 local_alerts=snapshot.local_alerts,
                 layer_items=snapshot.layer_items,
                 drop_threshold=int(self._option(CONF_ALERT_SCORE_DROP, DEFAULT_ALERT_SCORE_DROP)),
+                route_delay_min=int(self._option(CONF_ALERT_ROUTE_DELAY, DEFAULT_ALERT_ROUTE_DELAY)),
                 cooldown_s=60.0 * int(self._option(CONF_ALERT_COOLDOWN_MIN, DEFAULT_ALERT_COOLDOWN_MIN)),
             )
         except Exception:  # noqa: BLE001 - alerting must never break a refresh
             _LOGGER.exception("Could not evaluate Lage Monitor alert events")
             return
+        for event in events:
+            self._publish_event(event)
+
+    def _publish_event(self, event: dict[str, Any]) -> None:
+        """Fire the bus event and forward it to the configured notify service."""
+        self.hass.bus.async_fire(alerting.EVENT_NAME, event)
         service = str(self._option(CONF_ALERT_NOTIFY_SERVICE, DEFAULT_ALERT_NOTIFY_SERVICE)).strip()
         if service.startswith("notify."):
             service = service[len("notify."):]
-        for event in events:
-            self.hass.bus.async_fire(alerting.EVENT_NAME, event)
-            if service and re.fullmatch(r"[a-z0-9_]+", service):
-                self.hass.async_create_task(
-                    self.hass.services.async_call(
-                        "notify",
-                        service,
-                        {"title": "Lage Monitor", "message": alerting.format_message(event)},
-                    )
-                )
-
-    def _build_score_trend(self, germany_score: int, stability_index: int) -> dict[str, str | int]:
-        """Compare the current snapshot against the previous one kept by the coordinator."""
-        previous = self.data
-        if previous is None:
-            return {"delta": 0, "direction": "stable", "label": "Keine Vergleichsdaten"}
-
-        delta = int(germany_score) - int(previous.germany_score)
-        if delta >= 4:
-            direction = "up"
-            label = f"+{delta} seit letztem Update"
-        elif delta <= -4:
-            direction = "down"
-            label = f"{delta} seit letztem Update"
-        else:
-            direction = "stable"
-            label = f"nahezu stabil ({delta:+d})"
-
-        stability_delta = int(stability_index) - int(previous.stability_index)
-        return {
-            "delta": delta,
-            "direction": direction,
-            "label": label,
-            "stability_delta": stability_delta,
-        }
-
-    def _build_risk_components(
-        self,
-        items: list[dict],
-        region: str,
-        alert_risk: int,
-        police_risk: int,
-        news_risk: int,
-        priority_risk: int,
-        military_risk: int,
-    ) -> dict[str, int]:
-        """Map current signals to a website-style U/C/S/I proxy breakdown."""
-        region_items = [item for item in items if item.get("region") == region]
-        unrest_hits = 0
-        conflict_hits = 0
-        for item in region_items[:20]:
-            text = self._normalize_text(
-                f"{item.get('title', '')} {item.get('summary', '')} {' '.join(item.get('keywords', []))}"
-            )
-            if any(
-                keyword in text
-                for keyword in ("unruhen", "ausschreit", "protest", "demonstr", "streik", "riot", "blockad")
-            ):
-                unrest_hits += 1
-            if any(
-                keyword in text
-                for keyword in ("anschlag", "terror", "explosion", "amok", "geisel", "angriff", "attack", "bomb", "krieg")
-            ):
-                conflict_hits += 1
-
-        return {
-            "unrest": min(100, int(police_risk) * 4 + unrest_hits * 8),
-            "conflict": min(100, int(priority_risk) * 5 + conflict_hits * 10),
-            "military": min(100, int(military_risk)),
-            "information": min(100, int(alert_risk) * 2 + int(news_risk) * 3),
-        }
-
-    def _build_history_summary(
-        self,
-        germany_score: int,
-        global_score: int,
-        local_score: int,
-        stability_index: int,
-    ) -> dict[str, dict[str, Any]]:
-        """Build lightweight 24h and 7d trends from coordinator runtime history."""
-        now = dt_util.now()
-        self._score_history.append(
-            {
-                "ts": now,
-                "germany_score": int(germany_score),
-                "global_score": int(global_score),
-                "local_score": int(local_score),
-                "stability_index": int(stability_index),
-            }
-        )
-        cutoff = now - timedelta(days=7, hours=1)
-        self._score_history = [item for item in self._score_history if item["ts"] >= cutoff]
-        self.hass.async_create_task(self._async_save_history())
-        return {
-            "germany": self._history_for_metric("germany_score", int(germany_score), now),
-            "local": self._history_for_metric("local_score", int(local_score), now),
-            "world": self._history_for_metric("global_score", int(global_score), now),
-            "stability": self._history_for_metric("stability_index", int(stability_index), now),
-        }
-
-    def _history_for_metric(
-        self,
-        key: str,
-        current: int,
-        now,
-    ) -> dict[str, Any]:
-        """Return current plus deltas to the closest 24h and 7d sample."""
-        past_scores = [
-            int(item[key])
-            for item in self._score_history[:-1]
-            if key in item
-        ]
-        baseline = baseline_deviation(
-            100 - current,
-            [100 - value for value in past_scores],
-        )
-        return {
-            "current": current,
-            "delta_24h": self._delta_from_history(key, current, now - timedelta(hours=24)),
-            "delta_7d": self._delta_from_history(key, current, now - timedelta(days=7)),
-            "label_24h": self._delta_label(self._delta_from_history(key, current, now - timedelta(hours=24))),
-            "label_7d": self._delta_label(self._delta_from_history(key, current, now - timedelta(days=7))),
-            "baseline": baseline,
-            "series": self._history_series(key, max_points=28),
-        }
-
-    def _history_series(self, key: str, *, max_points: int) -> list[int]:
-        """Return an evenly sampled seven-day score series for sparklines."""
-        values = [int(item[key]) for item in self._score_history if key in item]
-        if len(values) <= max_points:
-            return values
-        step = (len(values) - 1) / (max_points - 1)
-        indexes = [round(index * step) for index in range(max_points)]
-        return [values[index] for index in indexes]
-
-    async def _safe_fetch_public_event_items(
-        self,
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-    ) -> tuple[list[dict], dict[str, dict]]:
-        """Fetch keyless structured event sources for Germany and the local radius."""
-        results = await asyncio.gather(
-            self._safe_fetch_usgs_items(home_center, radius_km),
-            self._safe_fetch_eonet_items(home_center, radius_km),
-            return_exceptions=True,
-        )
-        items: list[dict] = []
-        status: dict[str, dict] = {}
-        for source_name, result in zip(("usgs", "eonet"), results, strict=False):
-            if isinstance(result, Exception):
-                status[source_name] = {"ok": False, "items": 0, "error": str(result)}
-                continue
-            source_items, source_status = result
-            items.extend(source_items)
-            status[source_name] = source_status
-        items.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
-        return items, status
-
-    async def _safe_fetch_usgs_items(
-        self,
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-    ) -> tuple[list[dict], dict]:
-        """Fetch recent USGS earthquakes (cached, conditional) and normalize hits."""
-        policy = SourcePolicy(min_interval=EVENTS_MIN_INTERVAL, max_stale=EVENTS_MAX_STALE)
-
-        async def fetch(etag, last_modified):
-            return await fetch_json_conditional(self.hass, USGS_EARTHQUAKE_FEED_URL, etag, last_modified)
-
-        result = await self._cached_get("events:usgs", fetch, policy)
-        if not result.ok:
-            _LOGGER.warning("USGS %s: %s", "stale" if result.stale else "failed", result.error)
-        if result.value is None:
-            return [], result.status(0)
-        try:
-            items = self._normalize_usgs_items(result.value, home_center, radius_km)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("USGS data could not be processed: %s", err)
-            return [], {**result.status(0), "ok": False, "error": f"Verarbeitung: {err}"}
-        return items, result.status(len(items))
-
-    async def _safe_fetch_eonet_items(
-        self,
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-    ) -> tuple[list[dict], dict]:
-        """Fetch recent natural events for Germany and the local radius."""
-        params_list = [
-            self._eonet_query_params_from_bbox(GERMANY_BBOX, days=14, limit=40),
-        ]
-        local_bbox = self._bbox_for_home_radius(home_center, radius_km)
-        if local_bbox is not None:
-            params_list.append(self._eonet_query_params_from_bbox(local_bbox, days=14, limit=25))
-
-        policy = SourcePolicy(min_interval=EVENTS_MIN_INTERVAL, max_stale=EVENTS_MAX_STALE)
-
-        def make_fetch(url: str):
-            async def fetch(etag, last_modified):
-                return await fetch_json_conditional(self.hass, url, etag, last_modified)
-
-            return fetch
-
-        results = await asyncio.gather(
-            *(
-                self._cached_get(
-                    f"events:eonet:{index}",
-                    make_fetch(f"{EONET_EVENTS_API_URL}?{params}"),
-                    policy,
-                )
-                for index, params in enumerate(params_list)
-            )
-        )
-
-        merged: list[dict] = []
-        seen: set[str] = set()
-        for result in results:
-            events = result.value.get("events") if isinstance(result.value, dict) else None
-            if not isinstance(events, list):
-                continue
-            for event in events:
-                item = self._normalize_eonet_event(event, home_center, radius_km)
-                if item is None:
-                    continue
-                key = str(item.get("link") or item.get("title") or "")
-                if key in seen:
-                    continue
-                seen.add(key)
-                merged.append(item)
-        merged.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
-        items = merged[:14]
-
-        failed = [result for result in results if not result.ok]
-        errors = "; ".join(sorted({result.error for result in failed if result.error}))
-        status = {
-            "ok": not failed,
-            "items": len(items),
-            "error": errors,
-            "state": "error" if failed and all(r.value is None for r in failed) else (
-                "stale" if failed else "fresh"
-            ),
-            "stale": any(result.stale for result in results),
-            "age_seconds": int(max((result.age for result in results), default=0)),
-            "failures": max((result.failures for result in results), default=0),
-        }
-        if failed:
-            _LOGGER.warning("EONET incomplete (%s of %s requests failed): %s", len(failed), len(results), errors)
-        return items, status
-
-    def _normalize_usgs_items(
-        self,
-        data: Any,
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-    ) -> list[dict]:
-        """Convert USGS GeoJSON earthquakes into scored items."""
-        features = data.get("features") if isinstance(data, dict) else None
-        if not isinstance(features, list):
-            return []
-
-        items: list[dict] = []
-        for feature in features:
-            if not isinstance(feature, dict):
-                continue
-            properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
-            geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
-            coordinates = geometry.get("coordinates")
-            if not isinstance(coordinates, list) or len(coordinates) < 2:
-                continue
-            lon = self._to_float_or_none(coordinates[0])
-            lat = self._to_float_or_none(coordinates[1])
-            mag = self._to_float_or_none(properties.get("mag")) or 0.0
-            if lat is None or lon is None:
-                continue
-
-            is_germany = self._is_in_germany(lat, lon)
-            is_local = self._is_within_radius(home_center, lat, lon, radius_km)
-            is_near = geo.in_neighborhood(lat, lon)
-            if mag < 4.5 and not is_germany and not is_local and not (is_near and mag >= 3.5):
-                continue
-
-            title = str(properties.get("title") or properties.get("place") or "Erdbeben").strip()
-            place = str(properties.get("place") or "").strip()
-            published = self._timestamp_from_epoch_ms(properties.get("time"))
-            score = 4 + min(14, int(round(mag * 2)))
-            if is_germany:
-                score += 4
-            if is_local:
-                score += 6
-            if mag >= 6.0:
-                score += 4
-            summary = f"USGS Erdbeben Magnitude {mag:.1f}"
-            if place:
-                summary = f"{summary} bei {place}"
-            items.append(
-                self._build_structured_item(
-                    title=title,
-                    summary=summary,
-                    source="usgs",
-                    published=published,
-                    score=score,
-                    region="de" if is_germany or is_local else "world",
-                    latitude=lat,
-                    longitude=lon,
-                    severity=f"M{mag:.1f}",
-                    keywords=["erdbeben"],
+        if service and re.fullmatch(r"[a-z0-9_]+", service):
+            self.hass.async_create_task(
+                self.hass.services.async_call(
+                    "notify",
+                    service,
+                    {"title": "Lage Monitor", "message": alerting.format_message(event)},
                 )
             )
-        return items[:12]
 
-    def _delta_from_history(self, key: str, current: int, target_time) -> int | None:
-        """Find nearest sample at or before target time and return delta from now."""
-        candidates = [item for item in self._score_history if item["ts"] <= target_time and key in item]
-        if not candidates:
-            return None
-        reference = max(candidates, key=lambda item: item["ts"])
-        return current - int(reference[key])
-
-    def _delta_label(self, delta: int | None) -> str:
-        """Human-readable summary for trend deltas."""
-        if delta is None:
-            return "Keine Daten"
-        if delta > 0:
-            return f"+{delta}"
-        if delta < 0:
-            return str(delta)
-        return "0"
-
-    def _build_source_freshness(
-        self,
-        scored_items: list[dict],
-        alerts: list[dict],
-        source_status: dict[str, dict],
-    ) -> list[dict[str, str | int | None | bool]]:
-        """Summarize source health and latest publication age for the dashboard."""
-        now = dt_util.now()
-        latest_by_source: dict[str, Any] = {}
-        for item in scored_items:
-            source = str(item.get("source") or "")
-            published = self._parse_feed_datetime(item.get("published"))
-            if not source or published is None:
-                continue
-            current = latest_by_source.get(source)
-            if current is None or published > current:
-                latest_by_source[source] = published
-
-        latest_warn = None
-        for alert in alerts:
-            sent = dt_util.parse_datetime(str(alert.get("sent") or ""))
-            if sent is None:
-                continue
-            sent_local = dt_util.as_local(sent)
-            if latest_warn is None or sent_local > latest_warn:
-                latest_warn = sent_local
-        if latest_warn is not None:
-            latest_by_source["warnung_bund"] = latest_warn
-
-        freshness: list[dict[str, str | int | None | bool]] = []
-        for source, status in sorted(source_status.items()):
-            latest_dt = latest_by_source.get(source)
-            age_minutes = None
-            if latest_dt is not None:
-                age_minutes = max(0, int((now - dt_util.as_local(latest_dt)).total_seconds() // 60))
-            label = "Fehler"
-            if status.get("stale"):
-                label = "Cache (veraltet)"
-            elif status.get("ok") is True:
-                if age_minutes is None:
-                    label = "Keine Zeitdaten"
-                elif age_minutes <= 120:
-                    label = "Frisch"
-                elif age_minutes <= 720:
-                    label = "Verzögert"
-                else:
-                    label = "Alt"
-            freshness.append(
-                {
-                    "source": source,
-                    "ok": bool(status.get("ok")),
-                    "items": int(status.get("items") or 0),
-                    "age_minutes": age_minutes,
-                    "label": label,
-                    "error": str(status.get("error") or ""),
-                }
-            )
-        freshness.sort(key=lambda item: (not bool(item["ok"]), (item["age_minutes"] or 10**9)))
-        return freshness[:12]
-
-    def _build_risk_drivers(
-        self,
-        score_breakdown: dict[str, int],
-        germany_headlines: list[dict],
-        alerts: list[dict],
-    ) -> list[dict]:
-        """Return the strongest current score drivers in descending order."""
-        drivers = [
-            {
-                "key": "alerts",
-                "label": "Amtliche Warnungen",
-                "value": int(score_breakdown.get("alerts", 0)),
-                "detail": f"{len(alerts)} aktive Warnungen",
-            },
-            {
-                "key": "news_germany",
-                "label": "Deutschland-News",
-                "value": int(score_breakdown.get("news_germany", 0)),
-                "detail": f"{len(germany_headlines)} relevante Deutschland-Treffer",
-            },
-            {
-                "key": "high_priority_germany",
-                "label": "Hochpriorisierte Ereignisse",
-                "value": int(score_breakdown.get("high_priority_germany", 0)),
-                "detail": "Anschlag-, Terror- und Gewaltcluster",
-            },
-            {
-                "key": "police_germany",
-                "label": "Polizei- und Blaulichtdruck",
-                "value": int(score_breakdown.get("police_germany", 0)),
-                "detail": "Relevante Polizeimeldungen in Deutschland",
-            },
-        ]
-        ranked = [driver for driver in drivers if driver["value"] > 0]
-        ranked.sort(key=lambda driver: int(driver["value"]), reverse=True)
-        return ranked[:4]
-
-    def _build_analysis_summary(
-        self,
-        germany_score: int,
-        global_score: int,
-        local_score: int,
-        stability_index: int,
-        active_alerts: int,
-        local_active_alerts: int,
-        military_signal_germany: int,
-        military_signal_world: int,
-        risk_drivers: list[dict],
-        germany_headlines: list[dict],
-        world_headlines: list[dict],
-        local_headlines: list[dict],
-        alert_radius_km: int,
-        history_summary: dict[str, dict[str, Any]],
-        data_quality: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Build concise Lagebewertungen for Germany, world, and Home radius."""
-        top_driver = risk_drivers[0] if risk_drivers else None
-        status = _assessment_status(germany_score)
-        headline = "Deutschland aktuell ruhig."
-        if germany_score < 25:
-            headline = "Deutschland aktuell klar angespannt."
-        elif germany_score < 40:
-            headline = "Deutschland aktuell spürbar belastet."
-        elif germany_score < 70:
-            headline = "Deutschland aktuell erhöht aufmerksam, aber nicht akut kritisch."
-
-        if stability_index <= 35:
-            headline += " Die Stabilität ist deutlich unter Normalniveau."
-        elif stability_index <= 55:
-            headline += " Die Stabilität bleibt fragil."
-
-        if top_driver is None:
-            drivers = "Aktuell fehlen dominante Risikotreiber in den Eingangsdaten."
-        else:
-            drivers = f"Haupttreiber ist {top_driver['label'].lower()} ({top_driver['detail']})."
-            if germany_headlines:
-                top_title = str(germany_headlines[0].get("title") or "").strip()
-                if top_title:
-                    drivers += f" Prägendes Thema: {top_title}"
-
-        if active_alerts >= 10 and military_signal_germany >= 70:
-            outlook = "Amtliche Warnlagen sind vorhanden, während das Militärsignal in Deutschland derzeit nicht zusätzlich eskaliert."
-        elif military_signal_germany < 50:
-            outlook = "Neben der Nachrichtenlage sollte besonders beobachtet werden, ob sich das Deutschland-bezogene Militärsignal weiter verschärft."
-        else:
-            outlook = "Entscheidend für die nächsten Updates ist, ob die aktuellen Top-Ereignisse in Deutschland weiter eskalieren oder aus den Schlagzeilen fallen."
-
-        germany_summary = {
-            "title": "Deutschland",
-            "status": status,
-            "headline": headline,
-            "drivers": drivers,
-            "outlook": outlook,
+    def send_test_alert(self, title: str = "") -> dict[str, Any]:
+        """Publish a test event (service ``lage_monitor.test_alert``)."""
+        event = {
+            "type": alerting.TYPE_TEST,
+            "direction": "info",
+            "title": title.strip()[:200] or "Testmeldung vom Lage Monitor",
         }
-        world_summary = self._build_world_analysis_summary(global_score, military_signal_world, world_headlines)
-        local_summary = self._build_local_analysis_summary(
-            local_score,
-            local_headlines,
-            alert_radius_km,
-            local_active_alerts,
-        )
+        self._publish_event(event)
+        return event
 
-        summaries = {
-            "germany": germany_summary,
-            "world": world_summary,
-            "local": local_summary,
-        }
-        for key, summary in summaries.items():
-            history = history_summary.get(key, {})
-            changes: list[str] = []
-            delta = history.get("delta_24h")
-            if isinstance(delta, int):
-                if delta > 0:
-                    changes.append(f"Lagewert in 24 Stunden um {delta} Punkte verbessert.")
-                elif delta < 0:
-                    changes.append(f"Lagewert in 24 Stunden um {abs(delta)} Punkte verschlechtert.")
-                else:
-                    changes.append("Lagewert gegenüber vor 24 Stunden unverändert.")
-            baseline = history.get("baseline")
-            if isinstance(baseline, dict) and baseline.get("label"):
-                changes.append(f"Belastung {baseline['label']}.")
-            if not changes:
-                changes.append("Noch keine belastbare 24-Stunden-Vergleichsbasis vorhanden.")
-            summary["changes"] = changes[:2]
-            summary["confidence"] = data_quality.get("label", "niedrig")
-
-        return {
-            "headline": headline,
-            "drivers": drivers,
-            "outlook": outlook,
-            **summaries,
-        }
-
-    def _build_world_analysis_summary(
-        self,
-        global_score: int,
-        military_signal_world: int,
-        world_headlines: list[dict],
-    ) -> dict[str, Any]:
-        """Build a concise global Lagebewertung."""
-        status = _assessment_status(global_score)
-        headline = "Weltweit aktuell ruhig."
-        if global_score < 25:
-            headline = "Weltweit aktuell klar angespannt."
-        elif global_score < 40:
-            headline = "Weltweit aktuell spürbar belastet."
-        elif global_score < 70:
-            headline = "Weltweit aktuell erhöht aufmerksam."
-
-        if military_signal_world <= 45:
-            headline += " Das globale Militärsignal bleibt deutlich belastet."
-        elif military_signal_world <= 65:
-            headline += " Das globale Militärsignal verdient Beobachtung."
-
-        top_world = world_headlines[0] if world_headlines else None
-        if top_world:
-            drivers = f"Prägend international: {top_world.get('title') or 'ohne Titel'}"
-        else:
-            drivers = "Aktuell fehlen dominante internationale Treiber in den Eingangsdaten."
-
-        if len(world_headlines) >= 4:
-            outlook = "Maßgeblich ist, ob mehrere internationale Konflikt- oder Krisenthemen parallel hoch bleiben."
-        else:
-            outlook = "Entscheidend bleibt, ob einzelne Weltlagen in die Breite eskalieren oder wieder an Relevanz verlieren."
-
-        return {
-            "title": "Welt",
-            "status": status,
-            "headline": headline,
-            "drivers": drivers,
-            "outlook": outlook,
-        }
-
-    def _build_local_analysis_summary(
-        self,
-        local_score: int,
-        local_headlines: list[dict],
-        alert_radius_km: int,
-        active_alerts: int,
-    ) -> dict[str, Any]:
-        """Build a concise local Lagebewertung around Home."""
-        status = _assessment_status(local_score)
-        headline = "Im Umkreis aktuell ruhig."
-        if local_score < 25:
-            headline = "Im Umkreis aktuell klar angespannt."
-        elif local_score < 40:
-            headline = "Im Umkreis aktuell spürbar belastet."
-        elif local_score < 70:
-            headline = "Im Umkreis aktuell erhöht aufmerksam."
-
-        top_local = local_headlines[0] if local_headlines else None
-        if top_local:
-            drivers = f"Prägend im Umkreis von {alert_radius_km} km: {top_local.get('title') or 'ohne Titel'}"
-        elif active_alerts:
-            drivers = f"Es liegen Warnungen vor, aktuell aber ohne dominante lokale Schwerpunktmeldung im Radius von {alert_radius_km} km."
-        else:
-            drivers = f"Im Radius von {alert_radius_km} km liegen aktuell keine dominanten Treiber vor."
-
-        if len(local_headlines) >= 3:
-            outlook = "Relevant ist, ob sich die lokalen Schwerpunktmeldungen verdichten oder wieder zerstreuen."
-        else:
-            outlook = "Entscheidend ist, ob neue lokale Warnungen oder Ortsbezug-Events in den Home-Umkreis hineinlaufen."
-
-        return {
-            "title": "Umkreis",
-            "status": status,
-            "headline": headline,
-            "drivers": drivers,
-            "outlook": outlook,
-        }
-
-    def _compute_military_signal(self, items: list[dict]) -> int:
-        """Return a deduplicated, time-weighted military risk score."""
-        military_items = [
-            {**item, "score": int(item.get("military_score") or 0)}
-            for item in items
-            if int(item.get("military_score") or 0) > 0
-        ]
-        return self._normalize_aggregate_risk(
-            military_items, dt_util.now(), scale=62.0, cap=100
-        )
-
-    def _normalize_aggregate_risk(
-        self,
-        items: list[dict],
-        now,
-        *,
-        scale: float,
-        cap: int,
-    ) -> int:
-        """Map an unbounded aggregate to a stable 0..cap risk value.
-
-        ``aggregate_risk`` removes near-duplicates, rewards independent source
-        confirmation and decays old events. Exponential normalization avoids a
-        handful of ordinary headlines forcing a permanent 0/100 safety score.
-        """
-        if not items:
-            return 0
-        raw = aggregate_risk(items, now)
-        normalized = cap * (1.0 - math.exp(-max(0.0, raw) / max(1.0, scale)))
-        return min(cap, max(0, round(normalized)))
-
-    def _split_scope_items(self, items: list[dict]) -> tuple[list[dict], list[dict]]:
-        """Return independent Germany and world inputs for score aggregation."""
-        germany = [
-            item
-            for item in items
-            if item.get("region") == "de" and item.get("source") not in OFFICIAL_ALERT_SOURCES
-        ]
-        world = [item for item in items if item.get("region") == "world"]
-        return germany, world
-
-    def _combine_risks(self, *risks: int) -> int:
-        """Combine independent bounded risks without simply adding overlaps."""
-        remaining = 1.0
-        for risk in risks:
-            remaining *= 1.0 - min(100, max(0, int(risk))) / 100.0
-        return min(100, max(0, round((1.0 - remaining) * 100)))
-
-    def _build_theme_scores(self, items: list[dict], now) -> dict[str, dict[str, int]]:
-        """Build explainable thematic risk/safety scores for one scope."""
-        result: dict[str, dict[str, int]] = {}
-        for key in THEME_KEYWORDS:
-            matches = [item for item in items if key in self._classify_item_themes(item)]
-            risk = self._normalize_aggregate_risk(matches, now, scale=48.0, cap=100)
-            result[key] = {
-                "risk": risk,
-                "score": 100 - risk,
-                "events": len(cluster_items(matches)),
-            }
-
-        military_matches = [item for item in items if "military" in self._classify_item_themes(item)]
-        military_risk = self._compute_military_signal(military_matches)
-        result["military"] = {
-            "risk": military_risk,
-            "score": 100 - military_risk,
-            "events": len(cluster_items(military_matches)),
-        }
-        return result
-
-    def _classify_item_themes(self, item: dict) -> list[str]:
-        """Return stable theme keys for lists, scores, and map filtering."""
-        existing = item.get("themes")
-        if isinstance(existing, list):
-            return [str(value) for value in existing if str(value) in (*THEME_KEYWORDS, "military")]
-        haystack = (
-            f"{item.get('title', '')} {item.get('summary', '')} "
-            f"{' '.join(item.get('keywords', []))}"
-        ).lower()
-        themes = [
-            key for key, keywords in THEME_KEYWORDS.items()
-            if any(keyword in haystack for keyword in keywords)
-        ]
-        if int(item.get("military_score") or 0) > 0 or item.get("military_keywords"):
-            themes.append("military")
-        return themes
-
-    def _build_data_quality(
-        self,
-        source_status: dict[str, dict],
-        freshness: list[dict],
-        germany_items: list[dict],
-        world_items: list[dict],
-        local_items: list[dict],
-    ) -> dict[str, Any]:
-        """Describe source health separately from the situation score."""
-        total = len(source_status)
-        healthy = sum(
-            1 for status in source_status.values()
-            if status.get("ok") is True and not status.get("stale")
-        )
-        stale = sum(1 for status in source_status.values() if status.get("stale"))
-        errors = sum(1 for status in source_status.values() if status.get("ok") is False)
-        current = sum(
-            1 for item in freshness
-            if str(item.get("label") or "").lower() in {"frisch", "keine zeitdaten"}
-        )
-        availability = healthy / total if total else 0.0
-        freshness_ratio = current / total if total else 0.0
-        all_sources = {
-            str(item.get("source") or "")
-            for item in (*germany_items, *world_items, *local_items)
-            if item.get("source")
-        }
-        diversity = min(1.0, len(all_sources) / 6.0)
-        score = round(100 * (availability * 0.55 + freshness_ratio * 0.25 + diversity * 0.20))
-        if score >= 80:
-            label = "hoch"
-        elif score >= 55:
-            label = "mittel"
-        else:
-            label = "niedrig"
-        return {
-            "score": score,
-            "label": label,
-            "healthy_sources": healthy,
-            "total_sources": total,
-            "stale_sources": stale,
-            "error_sources": errors,
-            "scope_sources": {
-                "germany": len({str(item.get("source") or "") for item in germany_items if item.get("source")}),
-                "world": len({str(item.get("source") or "") for item in world_items if item.get("source")}),
-                "local": len({str(item.get("source") or "") for item in local_items if item.get("source")}),
-            },
-        }
 
     async def _cached_get(self, key: str, fetch, policy: SourcePolicy) -> FetchResult:
         """Run a cached fetch with a global concurrency limit."""
@@ -1494,109 +722,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         items = result.value or []
         return items, result.status(len(items))
 
-    async def _safe_fetch_official_alerts(
-        self,
-        resolved_warn_area: dict | None,
-        service_filter: dict[str, bool],
-    ) -> tuple[list[dict], dict]:
-        """Fetch warnung.bund.de alerts; on failure keep the last good list (stale).
-
-        An unreachable warning service must not look like "no warnings".
-        """
-        policy = SourcePolicy(min_interval=ALERTS_MIN_INTERVAL, max_stale=ALERTS_MAX_STALE)
-
-        async def fetch(_etag, _last_modified):
-            alerts = await self._fetch_official_alerts(resolved_warn_area, service_filter)
-            return alerts, None, None
-
-        # No semaphore here: the leaf requests inside take it, avoiding nested waits.
-        result = await self._cache.get("alerts:warnung_bund", fetch, policy)
-        if not result.ok:
-            _LOGGER.warning(
-                "warnung.bund.de %s: %s",
-                "serving stale alerts" if result.stale else "unavailable",
-                result.error,
-            )
-        alerts = [dict(alert) for alert in (result.value or [])]
-        return alerts, result.status(len(alerts))
-
-    async def _fetch_official_alerts(
-        self,
-        resolved_warn_area: dict | None,
-        service_filter: dict[str, bool],
-    ) -> list[dict]:
-        alerts: list[dict] = []
-        if resolved_warn_area is not None:
-            dashboard = await self._fetch_warnung_dashboard(resolved_warn_area["dashboard_code"])
-            alerts.extend(self._normalize_dashboard_alert(item) for item in dashboard if isinstance(item, dict))
-
-        if not alerts:
-            channels = self._iter_enabled_warn_channels(service_filter)
-            channel_data = await asyncio.gather(
-                *(
-                    fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/{channel}/mapData.json")
-                    for channel in channels
-                ),
-                return_exceptions=True,
-            )
-            failed_channels = 0
-            for channel, data in zip(channels, channel_data, strict=True):
-                if isinstance(data, Exception):
-                    failed_channels += 1
-                    _LOGGER.warning("Warning channel %s failed: %s", channel, data)
-                    continue
-                if not isinstance(data, list):
-                    continue
-                alerts.extend(
-                    self._normalize_map_alert(item, channel)
-                    for item in data[:50]
-                    if isinstance(item, dict)
-                )
-            if channels and failed_channels == len(channels):
-                # Every channel failed: report an error so the stale fallback applies.
-                raise RuntimeError("alle Warnkanäle von warnung.bund.de nicht erreichbar")
-
-        unique: dict[str, dict] = {}
-        for alert in alerts:
-            if self._is_all_clear_alert(alert):
-                continue
-            key = str(alert.get("id") or alert.get("title"))
-            unique[key] = alert
-
-        resolved = [alert for alert in unique.values() if self._is_service_enabled(alert, service_filter)]
-        if resolved:
-            await self._enrich_official_alert_details(resolved[:15])
-        geometry_alerts = [alert for alert in resolved if alert.get("id")]
-        geometries = await asyncio.gather(
-            *(self._fetch_warning_geometry(alert.get("id")) for alert in geometry_alerts)
-        )
-        for alert, geometry in zip(geometry_alerts, geometries, strict=True):
-            lat = geometry.get("latitude")
-            lon = geometry.get("longitude")
-            if lat is not None and lon is not None:
-                alert["latitude"] = lat
-                alert["longitude"] = lon
-            polygons = geometry.get("polygons")
-            points = geometry.get("points")
-            if polygons:
-                alert["_geometry_polygons"] = polygons
-                alert["geo_precision"] = "warning_area"
-            elif points:
-                alert["_geometry_points"] = points
-                alert["geo_precision"] = "exact_point"
-            elif alert.get("latitude") is not None and alert.get("longitude") is not None:
-                alert["geo_precision"] = "reported_point"
-
-        valid_ids = {str(alert.get("id")) for alert in resolved if alert.get("id")}
-        self._cache.prune({f"detail:{i}" for i in valid_ids}, prefix="detail:")
-        self._cache.prune({f"geometry:{i}" for i in valid_ids}, prefix="geometry:")
-
-        return resolved
-
-    async def _fetch_warnung_dashboard(self, dashboard_code: str) -> list[dict]:
-        """Fetch a warnung.bund.de dashboard by 12-digit district code."""
-        data = await fetch_json(self.hass, f"{WARNUNG_BUND_BASE_URL}/dashboard/{dashboard_code}.json")
-        return data if isinstance(data, list) else []
 
     def _dedupe_items(self, items: Iterable[FeedItem]) -> list[FeedItem]:
         seen: set[str] = set()
@@ -1664,313 +789,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         scored_item["themes"] = self._classify_item_themes(scored_item)
         return scored_item
 
-    async def _fetch_warning_geometry(self, identifier: str | None) -> dict[str, Any]:
-        """Fetch and parse warning geometry, cached per warning id."""
-        if not identifier:
-            return {}
-        safe_identifier = quote(str(identifier), safe="")
-        url = f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.geojson"
-        policy = SourcePolicy(
-            min_interval=DETAIL_MIN_INTERVAL, max_stale=DETAIL_MAX_STALE, backoff_base=300
-        )
-
-        async def fetch(_etag, _last_modified):
-            geojson = await fetch_json(self.hass, url)
-            return self._geometry_context_from_geojson(geojson), None, None
-
-        result = await self._cached_get(f"geometry:{identifier}", fetch, policy)
-        return result.value if isinstance(result.value, dict) else {}
-
-    async def _fetch_warning_centroid(self, identifier: str | None) -> tuple[float | None, float | None]:
-        """Compatibility wrapper returning the area-weighted warning centroid."""
-        geometry = await self._fetch_warning_geometry(identifier)
-        return geometry.get("latitude"), geometry.get("longitude")
-
-    async def _get_warnung_catalogs(self) -> tuple[dict[str, dict], dict[str, dict]]:
-        """Load and cache district and municipality catalogs from warnung.bund.de."""
-        if self._warnung_kreise is None:
-            data = await fetch_json(self.hass, f"{WARNUNG_BUND_ASSETS_BASE_URL}/converted_kreise.json")
-            self._warnung_kreise = data if isinstance(data, dict) else {}
-        if self._warnung_gemeinden is None:
-            data = await fetch_json(
-                self.hass,
-                f"{WARNUNG_BUND_ASSETS_BASE_URL}/converted_gemeinden.json",
-            )
-            self._warnung_gemeinden = data if isinstance(data, dict) else {}
-        return self._warnung_kreise, self._warnung_gemeinden
-
-    async def _resolve_warn_area(self, raw_value: str) -> dict | None:
-        """Resolve a user-entered place or district name to a warnung.bund.de dashboard code."""
-        value = str(raw_value or "").strip()
-        if not value:
-            return None
-
-        kreise, gemeinden = await self._get_warnung_catalogs()
-        if value in kreise:
-            kreis = kreise[value]
-            return self._make_warn_area_result(value, kreis.get("NAME") or value, None)
-
-        if value in gemeinden:
-            gemeinde = gemeinden[value]
-            return self._make_warn_area_result(
-                str(gemeinde.get("RS") or "")[:5],
-                gemeinde.get("NAME") or value,
-                str(gemeinde.get("RS") or ""),
-            )
-
-        if re.fullmatch(r"\d{12}", value):
-            for gemeinde in gemeinden.values():
-                rs = str(gemeinde.get("RS") or "")
-                if rs == value:
-                    return self._make_warn_area_result(
-                        rs[:5],
-                        gemeinde.get("NAME") or value,
-                        rs,
-                    )
-            if value[:5] in kreise:
-                kreis = kreise[value[:5]]
-                return self._make_warn_area_result(value[:5], kreis.get("NAME") or value, None)
-
-        normalized = self._normalize_text(value)
-        exact_kreis = self._match_warn_area_by_name(normalized, kreise)
-        if exact_kreis is not None:
-            code, label = exact_kreis
-            return self._make_warn_area_result(code, label, None)
-
-        exact_gemeinde = self._match_warn_area_by_name(normalized, gemeinden, use_rs=True)
-        if exact_gemeinde is not None:
-            code, label, rs = exact_gemeinde
-            return self._make_warn_area_result(code, label, rs)
-
-        return None
-
-    def _make_warn_area_result(
-        self,
-        kreis_code: str,
-        label: str,
-        rs: str | None,
-    ) -> dict:
-        """Build a resolved warn area result."""
-        return {
-            "label": label,
-            "kreis_code": kreis_code,
-            "dashboard_code": f"{kreis_code}0000000",
-            "rs": rs or "",
-        }
-
-    def _match_warn_area_by_name(
-        self,
-        normalized_query: str,
-        source: dict[str, dict],
-        *,
-        use_rs: bool = False,
-    ):
-        """Match a query against district or municipality names."""
-        exact_match = None
-        partial_match = None
-        for key, item in source.items():
-            label = str(item.get("NAME") or "").strip()
-            if not label:
-                continue
-            normalized_label = self._normalize_text(label)
-            if normalized_label == normalized_query:
-                if use_rs:
-                    rs = str(item.get("RS") or "")
-                    return rs[:5], label, rs
-                return str(key), label
-            if partial_match is None and normalized_query in normalized_label:
-                partial_match = (key, item)
-            if exact_match is None and normalized_label.startswith(normalized_query):
-                exact_match = (key, item)
-
-        selected = exact_match or partial_match
-        if selected is None:
-            return None
-
-        key, item = selected
-        label = str(item.get("NAME") or "").strip() or str(key)
-        if use_rs:
-            rs = str(item.get("RS") or "")
-            return rs[:5], label, rs
-        return str(key), label
-
-    def _normalize_dashboard_alert(self, item: dict) -> dict:
-        """Normalize a warnung.bund.de dashboard alert entry."""
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        lat, lon = self._extract_lat_lon(item)
-        return {
-            "id": self._extract_warning_identifier(item),
-            "title": payload_data.get("headline")
-            or item.get("title")
-            or self._extract_localized_title(item),
-            "source": self._extract_service_source(item),
-            "severity": payload_data.get("severity") or item.get("severity") or "",
-            "sent": payload_data.get("sent") or item.get("sent") or item.get("startDate"),
-            "link": None,
-            "latitude": lat,
-            "longitude": lon,
-        }
-
-    def _normalize_map_alert(self, item: dict, channel: str) -> dict:
-        """Normalize a warnung.bund.de mapData alert entry."""
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        lat, lon = self._extract_lat_lon(item)
-        return {
-            "id": self._extract_warning_identifier(item),
-            "title": payload_data.get("headline")
-            or item.get("title")
-            or self._extract_localized_title(item),
-            "source": channel,
-            "severity": payload_data.get("severity") or item.get("severity") or "",
-            "sent": payload_data.get("sent") or item.get("sent") or item.get("startDate"),
-            "link": None,
-            "latitude": lat,
-            "longitude": lon,
-        }
-
-    def _extract_localized_title(self, item: dict) -> str:
-        """Return a localized title when available."""
-        title = item.get("i18nTitle")
-        if isinstance(title, dict):
-            for key in ("de", "en"):
-                value = title.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-        return str(item.get("headline") or item.get("title") or "Warnung")
-
-    def _extract_service_source(self, item: dict) -> str:
-        """Determine the service source from provider or identifier fields."""
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        provider = str(
-            payload_data.get("provider")
-            or item.get("provider")
-            or item.get("identifier")
-            or item.get("id")
-            or ""
-        ).lower()
-        if "pol" in provider:
-            return "police"
-        if "dwd" in provider:
-            return "dwd"
-        if "lhp" in provider:
-            return "lhp"
-        if "katwarn" in provider:
-            return "katwarn"
-        if "biwapp" in provider:
-            return "biwapp"
-        return "mowas"
-
-    async def _enrich_official_alert_details(self, alerts: list[dict]) -> None:
-        """Populate official warning text and affected regions from warnung.bund detail data."""
-        await asyncio.gather(
-            *(self._enrich_single_official_alert(alert) for alert in alerts),
-            return_exceptions=True,
-        )
-
-    async def _enrich_single_official_alert(self, alert: dict) -> None:
-        """Populate a single official alert with description and affected region text."""
-        identifier = str(alert.get("id") or "").strip()
-        if not identifier:
-            return
-        try:
-            details = await self._fetch_warning_details(identifier)
-        except Exception:  # noqa: BLE001
-            return
-        if details["description"]:
-            alert["description"] = details["description"]
-        if details["affected_regions"]:
-            alert["affected_regions"] = details["affected_regions"]
-
-    async def _fetch_warning_details(self, identifier: str) -> dict[str, str]:
-        """Fetch human-readable warning details (cached per warning id)."""
-        empty = {"description": "", "affected_regions": ""}
-        safe_identifier = quote(identifier, safe="")
-        url = f"{WARNUNG_BUND_BASE_URL}/warnings/{safe_identifier}.json"
-        policy = SourcePolicy(
-            min_interval=DETAIL_MIN_INTERVAL, max_stale=DETAIL_MAX_STALE, backoff_base=300
-        )
-
-        async def fetch(_etag, _last_modified):
-            return await self._download_warning_details(url), None, None
-
-        result = await self._cached_get(f"detail:{identifier}", fetch, policy)
-        return result.value if result.value is not None else empty
-
-    async def _download_warning_details(self, url: str) -> dict[str, str]:
-        """Download and parse the detail JSON of one warning."""
-        data = await fetch_json(self.hass, url)
-        if not isinstance(data, dict):
-            return {"description": "", "affected_regions": ""}
-
-        info_entries = data.get("info")
-        if not isinstance(info_entries, list):
-            return {"description": "", "affected_regions": ""}
-
-        selected_info = None
-        for entry in info_entries:
-            if isinstance(entry, dict) and str(entry.get("language") or "").upper().startswith("DE"):
-                selected_info = entry
-                break
-        if selected_info is None:
-            selected_info = next((entry for entry in info_entries if isinstance(entry, dict)), None)
-        if not isinstance(selected_info, dict):
-            return {"description": "", "affected_regions": ""}
-
-        areas = selected_info.get("area")
-        area_entries = areas if isinstance(areas, list) else [areas] if isinstance(areas, dict) else []
-        area_descriptions: list[str] = []
-        for area in area_entries:
-            if not isinstance(area, dict):
-                continue
-            area_desc = self._clean_warning_text(area.get("areaDesc"))
-            if area_desc and area_desc not in area_descriptions:
-                area_descriptions.append(area_desc)
-
-        return {
-            "description": self._clean_warning_text(selected_info.get("description")),
-            "affected_regions": " | ".join(area_descriptions),
-        }
-
-    def _clean_warning_text(self, value: object) -> str:
-        """Convert warnung.bund rich text into compact plain text."""
-        text = str(value or "")
-        if not text.strip():
-            return ""
-        text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = html.unescape(text)
-        text = re.sub(r"[ \t\r\f\v]+", " ", text)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
-
-    def _iter_enabled_warn_channels(self, service_filter: dict[str, bool]) -> list[str]:
-        """Return the warnung.bund.de channels enabled by the current service filter."""
-        channels: list[str] = []
-        if service_filter.get("mowasOn"):
-            channels.extend(["mowas", "biwapp", "katwarn"])
-        if service_filter.get("dwdOn"):
-            channels.append("dwd")
-        if service_filter.get("lhpOn"):
-            channels.append("lhp")
-        if service_filter.get("policeOn"):
-            channels.append("police")
-        return channels
-
-    def _is_service_enabled(self, alert: dict, service_filter: dict[str, bool]) -> bool:
-        """Check whether an alert belongs to an enabled service group."""
-        source = str(alert.get("source") or "").lower()
-        if source in {"mowas", "biwapp", "katwarn"}:
-            return service_filter.get("mowasOn", False)
-        if source == "dwd":
-            return service_filter.get("dwdOn", False)
-        if source == "lhp":
-            return service_filter.get("lhpOn", False)
-        if source == "police":
-            return service_filter.get("policeOn", False)
-        return True
 
     def _extract_lat_lon(self, item: dict) -> tuple[float | None, float | None]:
         """Try to extract coordinates from a map warning payload."""
@@ -1982,22 +800,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             return nested
         return None, None
 
-    def _extract_warning_identifier(self, item: dict) -> str | None:
-        """Return the best warning identifier we can find for detail/geojson lookups."""
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        for candidate in (
-            item.get("identifier"),
-            item.get("id"),
-            payload.get("identifier"),
-            payload.get("id"),
-            payload_data.get("identifier"),
-            payload_data.get("id"),
-            payload_data.get("warningId"),
-        ):
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
-        return None
 
     def _extract_coordinate_pair(self, value: dict) -> tuple[float | None, float | None]:
         """Extract a lat/lon pair from a single mapping level."""
@@ -2171,99 +973,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             round(home_lat - lat_delta, 4),
         )
 
-    def _eonet_query_params_from_bbox(
-        self,
-        bbox: tuple[float, float, float, float],
-        *,
-        days: int,
-        limit: int,
-    ) -> str:
-        """Return encoded EONET query parameters for a bbox search."""
-        min_lon, max_lat, max_lon, min_lat = bbox
-        return (
-            f"status=all&days={days}&limit={limit}"
-            f"&bbox={min_lon},{max_lat},{max_lon},{min_lat}"
-        )
-
-    def _normalize_eonet_event(
-        self,
-        event: dict,
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-    ) -> dict | None:
-        """Convert an EONET event into a scored item."""
-        if not isinstance(event, dict):
-            return None
-        geometry_entries = event.get("geometry")
-        if not isinstance(geometry_entries, list) or not geometry_entries:
-            return None
-        latest_geometry = geometry_entries[-1]
-        lat, lon = self._extract_eonet_geometry_center(latest_geometry)
-        if lat is None or lon is None:
-            return None
-
-        categories = event.get("categories") if isinstance(event.get("categories"), list) else []
-        category_titles = [
-            str(category.get("title") or category.get("id") or "").strip()
-            for category in categories
-            if isinstance(category, dict)
-        ]
-        category_text = ", ".join(title for title in category_titles if title)
-        source_titles = [
-            str(source.get("id") or source.get("title") or "").strip()
-            for source in (event.get("sources") if isinstance(event.get("sources"), list) else [])
-            if isinstance(source, dict)
-        ]
-        title = str(event.get("title") or "Naturereignis").strip()
-        link = str(event.get("link") or "").strip()
-        published = str(latest_geometry.get("date") or event.get("closed") or "")
-        is_germany = self._is_in_germany(lat, lon)
-        is_local = self._is_within_radius(home_center, lat, lon, radius_km)
-        if not is_germany and not is_local and not geo.in_neighborhood(lat, lon):
-            return None
-
-        score = self._score_eonet_categories(category_titles)
-        if is_local:
-            score += 5
-        summary_parts = [part for part in (category_text, ", ".join(source_titles[:2])) if part]
-        summary = " | ".join(summary_parts) or "NASA EONET Naturereignis"
-        return self._build_structured_item(
-            title=title,
-            summary=summary,
-            source="eonet",
-            published=published,
-            score=score,
-            region="de" if is_germany or is_local else "world",
-            latitude=lat,
-            longitude=lon,
-            severity=category_text or "Naturereignis",
-            keywords=[title.lower() for title in category_titles[:2] if title] or ["naturereignis"],
-            link=link,
-        )
-
-    def _extract_eonet_geometry_center(self, geometry: dict) -> tuple[float | None, float | None]:
-        """Return a representative coordinate for an EONET geometry object."""
-        if not isinstance(geometry, dict):
-            return None, None
-        geojson = {
-            "type": "Feature",
-            "geometry": {
-                "type": geometry.get("type"),
-                "coordinates": geometry.get("coordinates"),
-            },
-        }
-        return self._centroid_from_geojson(geojson)
-
-    def _score_eonet_categories(self, categories: list[str]) -> int:
-        """Assign a simple risk score to public natural-event categories."""
-        normalized = [self._normalize_text(category) for category in categories]
-        if any(category in normalized for category in ("severestorms", "wildfires", "floods")):
-            return 14
-        if any(category in normalized for category in ("volcanoes", "landslides")):
-            return 12
-        if any(category in normalized for category in ("seaandlakeice", "drought")):
-            return 9
-        return 8
 
     def _centroid_from_geojson(self, geojson: dict) -> tuple[float | None, float | None]:
         """Compute an area-weighted representative point from GeoJSON."""
@@ -2274,313 +983,11 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         """Parse RFC 7946 geometry (see ``geometry.geometry_context_from_geojson``)."""
         return geometry.geometry_context_from_geojson(geojson)
 
-    def _build_map_markers(
-        self,
-        alerts: list[dict],
-        scored_items: list[dict],
-        home_center: tuple[float | None, float | None],
-        local_keywords: list[str],
-        radius_km: int,
-        focus_mode: str,
-    ) -> list[dict]:
-        """Build map markers from local alerts plus geolocated news items."""
-        markers: list[dict] = []
-        map_items = self._build_alert_map_items(alerts, home_center, radius_km) + self._build_news_map_items(
-            scored_items,
-            home_center,
-            local_keywords,
-            radius_km,
-            focus_mode,
-        )
-        clustered: dict[tuple[float, float], list[dict]] = {}
-
-        for item in map_items:
-            lat = item.get("latitude")
-            lon = item.get("longitude")
-            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
-                continue
-            key = (round(float(lat) / 0.35) * 0.35, round(float(lon) / 0.5) * 0.5)
-            clustered.setdefault(key, []).append(item)
-
-        for (lat, lon), cluster_alerts in clustered.items():
-            cluster_items = [
-                {
-                    "title": str(item.get("title") or "Meldung"),
-                    "source": str(item.get("source") or ""),
-                    "severity": str(item.get("severity") or ""),
-                    "link": str(item.get("link") or ""),
-                    "region": str(item.get("region") or "de"),
-                    "local": bool(item.get("local")),
-                    "themes": list(item.get("themes") or []),
-                }
-                for item in cluster_alerts[:5]
-            ]
-            top_titles = [item["title"] for item in cluster_items[:3]]
-            sources = sorted({str(item.get("source") or "") for item in cluster_alerts if item.get("source")})
-            themes = sorted({
-                str(theme)
-                for item in cluster_alerts
-                for theme in (item.get("themes") or [])
-                if str(theme)
-            })
-            markers.append(
-                {
-                    "key": f"cluster:{round(lat, 5)}:{round(lon, 5)}",
-                    "kind": "cluster",
-                    "title": top_titles[0],
-                    "source": ", ".join(sources[:3]),
-                    "severity": f"{len(cluster_alerts)} Meldungen/News",
-                    "latitude": round(lat, 5),
-                    "longitude": round(lon, 5),
-                    "count": len(cluster_alerts),
-                    "titles": top_titles,
-                    "items": cluster_items,
-                    "region": "world" if all(item.get("region") == "world" for item in cluster_alerts) else "de",
-                    "local": any(bool(item.get("local")) for item in cluster_alerts),
-                    "themes": themes,
-                }
-            )
-
-        home_lat, home_lon = home_center
-        if isinstance(home_lat, (int, float)) and isinstance(home_lon, (int, float)):
-            markers.append(
-                {
-                    "key": f"home:{round(float(home_lat), 5)}:{round(float(home_lon), 5)}",
-                    "kind": "home",
-                    "title": "Home",
-                    "source": "zone.home",
-                    "severity": "Home Assistant Fokus",
-                    "latitude": float(home_lat),
-                    "longitude": float(home_lon),
-                    "count": 1,
-                    "items": [],
-                    "region": "local",
-                    "local": True,
-                    "themes": [],
-                }
-            )
-
-        markers.sort(key=lambda item: (item.get("kind") == "home", item.get("count", 0)), reverse=True)
-        return markers
-
-    def _build_alert_map_items(
-        self,
-        alerts: list[dict],
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-    ) -> list[dict]:
-        """Convert today's local alerts into map items."""
-        items: list[dict] = []
-        for alert in self._filter_alerts_for_today(alerts):
-            lat = alert.get("latitude")
-            lon = alert.get("longitude")
-            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
-                continue
-            distance = self._alert_distance_km(alert, home_center)
-            item = {
-                "title": str(alert.get("title") or "Warnung"),
-                "source": str(alert.get("source") or ""),
-                "severity": str(alert.get("severity") or ""),
-                "link": str(alert.get("link") or ""),
-                "latitude": float(lat),
-                "longitude": float(lon),
-                "region": "de",
-                "local": distance is not None and distance <= radius_km,
-            }
-            item["themes"] = self._classify_item_themes({
-                "title": item["title"],
-                "summary": item["severity"],
-                "keywords": [],
-                "military_score": 0,
-            })
-            items.append(item)
-        return items
-
-    def _build_news_map_items(
-        self,
-        scored_items: list[dict],
-        home_center: tuple[float | None, float | None],
-        local_keywords: list[str],
-        radius_km: int,
-        focus_mode: str,
-    ) -> list[dict]:
-        """Geolocate high-value news items for the map."""
-        items: list[dict] = []
-        home_lat, home_lon = home_center
-        seen: set[str] = set()
-        scope_counts = {"de": 0, "world": 0}
-
-        for item in scored_items:
-            if item.get("source") in {"mowas", "biwapp", "katwarn", "dwd", "lhp", "police"}:
-                continue
-            score = int(item.get("score") or 0)
-            if score < 8:
-                continue
-            region = "world" if item.get("region") == "world" else "de"
-            if scope_counts[region] >= 8:
-                continue
-
-            lat, lon, severity = self._resolve_news_coordinates(item, local_keywords, home_center)
-            if lat is None or lon is None:
-                continue
-            if (
-                focus_mode == FOCUS_MODE_LOCAL
-                and home_lat is not None
-                and home_lon is not None
-                and self._haversine_km(home_lat, home_lon, lat, lon) > radius_km
-                and severity != "Lokale News am Home-Fokus"
-            ):
-                continue
-
-            key = str(item.get("link") or item.get("title") or "")
-            if key in seen:
-                continue
-            seen.add(key)
-            items.append(
-                {
-                    "title": str(item.get("title") or "News"),
-                    "source": str(item.get("source") or ""),
-                    "severity": severity,
-                    "link": str(item.get("link") or ""),
-                    "latitude": lat,
-                    "longitude": lon,
-                    "region": region,
-                    "local": self._is_within_radius(home_center, lat, lon, radius_km),
-                    "themes": list(item.get("themes") or []),
-                }
-            )
-            scope_counts[region] += 1
-            if all(count >= 8 for count in scope_counts.values()):
-                break
-
-        return items
-
-    def _resolve_news_coordinates(
-        self,
-        item: dict,
-        local_keywords: list[str],
-        home_center: tuple[float | None, float | None],
-    ) -> tuple[float | None, float | None, str]:
-        """Resolve a best-effort coordinate for a news item."""
-        direct_lat = self._to_float_or_none(item.get("latitude"))
-        direct_lon = self._to_float_or_none(item.get("longitude"))
-        if direct_lat is not None and direct_lon is not None:
-            return direct_lat, direct_lon, str(item.get("severity") or "Ereignis mit Koordinaten")
-
-        text = f"{item.get('title', '')} {item.get('summary', '')}"
-        normalized_text = self._normalize_text(text)
-        home_lat, home_lon = home_center
-
-        for keyword in local_keywords:
-            normalized_keyword = self._normalize_text(keyword)
-            if normalized_keyword and normalized_keyword in normalized_text:
-                if home_lat is not None and home_lon is not None:
-                    return float(home_lat), float(home_lon), "Lokale News am Home-Fokus"
-
-        match = geo.locate(str(item.get("title") or ""), str(item.get("summary") or ""))
-        if match is not None:
-            return match.lat, match.lon, match.label
-
-        return None, None, ""
 
     def _feed_fetch_limit(self, news_limit: int) -> int:
         """Fetch deeper into feeds so later scoring can still surface relevant articles."""
         return max(12, int(news_limit or 0))
 
-    def _filter_alerts_for_today(self, alerts: list[dict]) -> list[dict]:
-        """Keep only alerts from today in the Home Assistant timezone when possible."""
-        today = dt_util.now().date()
-        filtered: list[dict] = []
-        for alert in alerts:
-            sent = alert.get("sent")
-            if not sent:
-                filtered.append(alert)
-                continue
-            parsed = dt_util.parse_datetime(str(sent))
-            if parsed is None:
-                filtered.append(alert)
-                continue
-            local_dt = dt_util.as_local(parsed)
-            if local_dt.date() == today:
-                filtered.append(alert)
-        return filtered
-
-    def _alerts_to_scored_items(self, alerts: list[dict]) -> list[dict]:
-        """Convert local alerts into headline-style items for the top list."""
-        items: list[dict] = []
-        for alert in alerts:
-            title = str(alert.get("title") or "Warnung")
-            source = str(alert.get("source") or "nina")
-            severity = str(alert.get("severity") or "")
-            score = self._score_official_alert(alert)
-            item = {
-                "title": title,
-                "link": alert.get("link") or "",
-                "summary": severity or f"{source} im Umkreis von Home",
-                "published": str(alert.get("sent") or ""),
-                "published_dt": self._parse_feed_datetime(str(alert.get("sent") or "")),
-                "source": source,
-                "score": score,
-                "keywords": [],
-                "military_keywords": [],
-                "military_score": 0,
-                "region": "de",
-                "latitude": alert.get("latitude"),
-                "longitude": alert.get("longitude"),
-            }
-            item["themes"] = self._classify_item_themes(item)
-            items.append(item)
-        return items
-
-    def _score_official_alert(self, alert: dict) -> int:
-        """Return a differentiated risk score for official alerts."""
-        source = str(alert.get("source") or "").lower()
-        severity = str(alert.get("severity") or "")
-        title = str(alert.get("title") or "")
-        description = str(alert.get("description") or "")
-        text = self._normalize_text(" ".join((severity, title, description)))
-
-        source_weight = {
-            "police": 2,
-            "dwd": 4,
-            "lhp": 4,
-            "biwapp": 5,
-            "katwarn": 5,
-            "mowas": 6,
-        }.get(source, 4)
-
-        severity_weight = 0
-        for keywords, weight in (
-            (("extrem", "extreme", "stufe 4", "unwetterwarnung", "gefahr"), 8),
-            (("hoch", "high", "stufe 3", "warnung", "warning", "alarm"), 5),
-            (("moderat", "moderate", "stufe 2", "beobachtung"), 3),
-            (("gering", "minor", "stufe 1", "hinweis", "information", "update"), 1),
-        ):
-            if any(keyword in text for keyword in keywords):
-                severity_weight = weight
-                break
-
-        critical_bonus = 0
-        for keywords, weight in (
-            (("evaku", "rauchgas", "grossbrand", "explosion", "terror", "amok"), 6),
-            (("kampfmittel", "chemikal", "trinkwasserverunreinigung", "ausfall", "blackout"), 5),
-            (("hochwasser", "ueberschwemm", "sturm", "orkan", "waldbrand"), 4),
-            (("hitz", "glatteis", "schnee", "regen"), 2),
-        ):
-            if any(keyword in text for keyword in keywords):
-                critical_bonus = max(critical_bonus, weight)
-
-        reduction = 0
-        for keywords, weight in (
-            (("aktualisierung", "fortschreibung", "update", "hinweis"), 1),
-            (("schutzchlor", "chlorung", "chlorungsmassnahme", "vorsorglich"), 3),
-            (("keine gesundheitsgefahrdung", "keine gesundheitsgefährdung", "entwarnung"), 4),
-        ):
-            if any(keyword in text for keyword in keywords):
-                reduction = max(reduction, weight)
-
-        score = source_weight + severity_weight + critical_bonus - reduction
-        return max(2, min(score, 16))
 
     def _build_local_headlines(
         self,
@@ -2636,33 +1043,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             return False
         return self._is_within_radius(home_center, lat, lon, radius_km)
 
-    def _select_local_alerts_for_headlines(
-        self,
-        alerts: list[dict],
-        local_keywords: list[str],
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-        focus_mode: str,
-    ) -> list[dict]:
-        """Select local alerts, preferring warning geometry over text matches."""
-        local_alerts: list[dict] = []
-        for alert in alerts:
-            distance = self._alert_distance_km(alert, home_center)
-            if distance is not None:
-                alert["distance_km"] = round(distance, 1)
-                if distance <= radius_km:
-                    local_alerts.append(alert)
-                # Known remote geometry must not be overridden by a text hit.
-                continue
-
-            haystack = " ".join(
-                str(alert.get(field) or "")
-                for field in ("title", "severity", "affected_regions", "description")
-            ).lower()
-            if any(keyword.lower() in haystack for keyword in local_keywords):
-                local_alerts.append(alert)
-
-        return local_alerts
 
     def _build_germany_headlines(
         self,
@@ -2750,35 +1130,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             return float(lat), float(lon)
         return None, None
 
-    def _filter_alerts_by_radius(
-        self,
-        alerts: list[dict],
-        home_center: tuple[float | None, float | None],
-        radius_km: int,
-        focus_mode: str,
-        local_keywords: list[str] | None = None,
-    ) -> list[dict]:
-        """Filter official alerts around Home when local mode is enabled."""
-        if focus_mode != FOCUS_MODE_LOCAL:
-            return alerts
-
-        keywords = local_keywords or []
-
-        filtered: list[dict] = []
-        for alert in alerts:
-            distance = self._alert_distance_km(alert, home_center)
-            if distance is None:
-                haystack = " ".join(
-                    str(alert.get(field) or "")
-                    for field in ("title", "severity", "affected_regions", "description")
-                ).lower()
-                if any(keyword.lower() in haystack for keyword in keywords):
-                    filtered.append(alert)
-                continue
-            alert["distance_km"] = round(distance, 1)
-            if distance <= radius_km:
-                filtered.append(alert)
-        return filtered
 
     def _alert_distance_km(
         self,
@@ -2890,12 +1241,6 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
         )
         return math.hypot(start_x + projection * segment_x, start_y + projection * segment_y)
 
-    def _public_alerts(self, alerts: list[dict]) -> list[dict]:
-        """Remove internal geometry arrays before publishing sensor attributes."""
-        return [
-            {key: value for key, value in alert.items() if not key.startswith("_geometry_")}
-            for alert in alerts
-        ]
 
     def _haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Return approximate distance in kilometers."""

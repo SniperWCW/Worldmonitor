@@ -183,7 +183,11 @@ Pegel Neckar | https://example.org/cam.jpg | Lokal
 | Pegelstände | PEGELONLINE | Gauges in the local radius at flood mark 1 or higher |
 | Strahlung | BfS ODL | Stations with 0.3 uSv/h or more |
 
-**Automations.** Changes are published as the `lage_monitor_alert` event with `type` (`status_change`, `score_drop`, `new_official_alert`, `flood_level`, `radiation_elevated`), `direction` (`worse`/`better`), `title` and type-specific fields:
+**My routes.** One line per route in "Meine Strecken": `A81 | Feuerbach, Ludwigsburg`. The keywords are exits or places as they appear in the reports (umlauts are optional); a line with only `A8` covers the whole motorway. Reports and webcams of your routes appear even outside the local radius, marked "Meine Strecke", with delay and speed, and the panel shows the route webcam images.
+
+**Testing alerts.** Call the service `lage_monitor.test_alert` (Developer tools > Actions) to fire a test event with `type: test`. For ready-made push messages import the blueprint *Lage Monitor – Ereignis melden* from `blueprints/automation/lage_monitor/alert_notify.yaml` and pick an action, for example a notification with the message `{{ trigger.event.data.title }}`.
+
+**Automations.** Changes are published as the `lage_monitor_alert` event with `type` (`status_change`, `score_drop`, `new_official_alert`, `flood_level`, `radiation_elevated`, `route_delay`, `test`), `direction` (`worse`/`better`), `title` and type-specific fields:
 
 ```yaml
 automation:

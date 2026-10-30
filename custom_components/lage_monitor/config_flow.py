@@ -12,6 +12,9 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_ALERT_COOLDOWN_MIN,
+    CONF_ALERT_ROUTE_DELAY,
+    CONF_AUTOBAHN_ROUTES,
+    CONF_WATER_ALWAYS,
     CONF_ALERT_NOTIFY_SERVICE,
     CONF_ALERT_RADIUS_KM,
     CONF_ALERT_SCORE_DROP,
@@ -35,6 +38,9 @@ from .const import (
     CONF_WARN_MOWAS,
     CONF_WARN_POLICE,
     DEFAULT_ALERT_COOLDOWN_MIN,
+    DEFAULT_ALERT_ROUTE_DELAY,
+    DEFAULT_AUTOBAHN_ROUTES,
+    DEFAULT_WATER_ALWAYS,
     DEFAULT_ALERT_NOTIFY_SERVICE,
     DEFAULT_ALERT_RADIUS_KM,
     DEFAULT_ALERT_SCORE_DROP,
@@ -137,8 +143,16 @@ def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
                 default=defaults.get(CONF_AUTOBAHN_ROADS, DEFAULT_AUTOBAHN_ROADS),
             ): str,
             vol.Optional(
+                CONF_AUTOBAHN_ROUTES,
+                default=defaults.get(CONF_AUTOBAHN_ROUTES, DEFAULT_AUTOBAHN_ROUTES),
+            ): selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
+            vol.Optional(
                 CONF_LAYER_WATER,
                 default=defaults.get(CONF_LAYER_WATER, DEFAULT_LAYER_WATER),
+            ): bool,
+            vol.Optional(
+                CONF_WATER_ALWAYS,
+                default=defaults.get(CONF_WATER_ALWAYS, DEFAULT_WATER_ALWAYS),
             ): bool,
             vol.Optional(
                 CONF_LAYER_RADIATION,
@@ -156,6 +170,10 @@ def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_ALERT_SCORE_DROP,
                 default=defaults.get(CONF_ALERT_SCORE_DROP, DEFAULT_ALERT_SCORE_DROP),
             ): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+            vol.Optional(
+                CONF_ALERT_ROUTE_DELAY,
+                default=defaults.get(CONF_ALERT_ROUTE_DELAY, DEFAULT_ALERT_ROUTE_DELAY),
+            ): vol.All(vol.Coerce(int), vol.Range(min=0, max=240)),
             vol.Optional(
                 CONF_ALERT_COOLDOWN_MIN,
                 default=defaults.get(CONF_ALERT_COOLDOWN_MIN, DEFAULT_ALERT_COOLDOWN_MIN),
