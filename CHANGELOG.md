@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 - 2026-10-30
+## 0.3.1 - 2026-10-30
 
 ### Added
 
@@ -13,6 +13,8 @@
 
 ### Changed
 
+- Version 0.3.0 was never published; 0.3.1 is the first release containing these changes.
+- New release workflow: a push to master that changes the version in `manifest.json` (or a pushed `v*.*.*` tag) publishes a GitHub release with notes from this file and `lage_monitor.zip`.
 - GeoJSON geometry parsing moved from `coordinator.py` to the pure module `geometry.py`; new sources live in the `sources/` package and `layers.py`, so the coordinator no longer grows with every source.
 
 ### Notes

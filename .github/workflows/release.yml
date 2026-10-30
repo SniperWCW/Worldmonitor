@@ -1,9 +1,16 @@
 name: Release
 
-# Publishes a GitHub release when a version tag (v1.2.3) is pushed.
-# The tag must match the version in manifest.json and have a CHANGELOG entry.
+# Publishes a GitHub release (and its tag) for the version in manifest.json.
+#  * push to master that changes manifest.json -> release v<version> is created
+#    if it does not exist yet (the tag is created on the pushed commit)
+#  * push of a tag v1.2.3 -> the release for that tag is created or completed
+# The version must match CARD_RESOURCE_VERSION and have a CHANGELOG.md entry.
 on:
   push:
+    branches:
+      - master
+    paths:
+      - custom_components/lage_monitor/manifest.json
     tags:
       - "v*.*.*"
 
@@ -29,18 +36,31 @@ jobs:
           python -m unittest discover -s tests -v
           node tests/frontend-smoke.js
 
-      - name: Check tag against manifest and card version
+      - name: Determine and check version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          MANIFEST=$(python -c "import json;print(json.load(open('custom_components/lage_monitor/manifest.json'))['version'])")
+          VERSION=$(python -c "import json;print(json.load(open('custom_components/lage_monitor/manifest.json'))['version'])")
           CARD=$(sed -n 's/^CARD_RESOURCE_VERSION = "\(.*\)"/\1/p' custom_components/lage_monitor/const.py)
-          echo "tag=$VERSION manifest=$MANIFEST card=$CARD"
-          test "$VERSION" = "$MANIFEST" || { echo "::error::Tag $VERSION does not match manifest.json $MANIFEST"; exit 1; }
-          test "$VERSION" = "$CARD" || { echo "::error::Tag $VERSION does not match CARD_RESOURCE_VERSION $CARD"; exit 1; }
+          echo "manifest=$VERSION card=$CARD ref=$GITHUB_REF"
+          test "$VERSION" = "$CARD" || { echo "::error::manifest.json $VERSION does not match CARD_RESOURCE_VERSION $CARD"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            test "$GITHUB_REF_NAME" = "v$VERSION" || { echo "::error::Tag $GITHUB_REF_NAME does not match manifest.json v$VERSION"; exit 1; }
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=v$VERSION" >> "$GITHUB_ENV"
+
+      - name: Skip when the release already exists (branch push)
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "branch" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Extract release notes from CHANGELOG.md
+        if: steps.existing.outputs.skip != 'true'
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           awk -v v="$VERSION" '
             $0 ~ "^## " v " " { found=1; next }
             found && /^## / { exit }
@@ -50,22 +70,24 @@ jobs:
           cat release-notes.md
 
       - name: Build integration archive
+        if: steps.existing.outputs.skip != 'true'
         run: |
           cd custom_components/lage_monitor
           zip -r -q ../../lage_monitor.zip . -x "*/__pycache__/*" "__pycache__/*" "*.pyc"
 
-      - name: Create or update GitHub release
+      - name: Create or complete GitHub release
+        if: steps.existing.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TITLE="Lage Monitor ${GITHUB_REF_NAME#v}"
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          TITLE="Lage Monitor $VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
             # Release was created by hand in the GitHub UI: complete it.
-            gh release edit "$GITHUB_REF_NAME" --title "$TITLE" --notes-file release-notes.md
-            gh release upload "$GITHUB_REF_NAME" lage_monitor.zip --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes-file release-notes.md
+            gh release upload "$TAG" lage_monitor.zip --clobber
           else
-            gh release create "$GITHUB_REF_NAME" lage_monitor.zip \
+            gh release create "$TAG" lage_monitor.zip \
               --title "$TITLE" \
               --notes-file release-notes.md \
-              --verify-tag
+              --target "$GITHUB_SHA"
           fi
