@@ -160,18 +160,28 @@ async def fetch_json_conditional(
     url: str,
     etag: str | None = None,
     last_modified: str | None = None,
+    timeout: float | None = None,
 ) -> tuple[Any, str | None, str | None]:
-    """Fetch JSON with conditional-request support (raises ``NotModified``)."""
+    """Fetch JSON with conditional-request support (raises ``NotModified``).
+
+    ``timeout`` (seconds) overrides the default for slow services. A response
+    that is not JSON (for example an XML error page) raises a ``ValueError``
+    that shows the start of the body.
+    """
     session = async_get_clientsession(hass)
     async with session.get(
         url,
         headers=_validator_headers(etag, last_modified),
-        timeout=REQUEST_TIMEOUT,
+        timeout=ClientTimeout(total=timeout) if timeout else REQUEST_TIMEOUT,
     ) as response:
         if response.status == 304:
             raise NotModified
         response.raise_for_status()
-        data = await response.json(content_type=None)
+        try:
+            data = await response.json(content_type=None)
+        except ValueError as err:
+            snippet = " ".join((await response.text())[:120].split())
+            raise ValueError(f"keine JSON-Antwort: {snippet!r}") from err
         return data, response.headers.get("ETag"), response.headers.get("Last-Modified")
 
 

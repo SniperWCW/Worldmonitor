@@ -706,9 +706,11 @@ class LageMonitorCoordinator(DataUpdateCoordinator[LageSnapshot]):
             radiation=bool(self._option(CONF_LAYER_RADIATION, DEFAULT_LAYER_RADIATION)),
         )
 
-        async def fetch(key: str, url: str, min_interval: float, max_stale: float) -> FetchResult:
+        async def fetch(
+            key: str, url: str, min_interval: float, max_stale: float, timeout: float | None = None
+        ) -> FetchResult:
             async def run(etag, last_modified):
-                return await fetch_json_conditional(self.hass, url, etag, last_modified)
+                return await fetch_json_conditional(self.hass, url, etag, last_modified, timeout=timeout)
 
             return await self._cached_get(
                 key, run, SourcePolicy(min_interval=min_interval, max_stale=max_stale)

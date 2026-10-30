@@ -29,9 +29,11 @@ class FakeFetch:
     def __init__(self, responses):
         self.responses = responses
         self.calls = []
+        self.timeouts = {}
 
-    async def __call__(self, key, url, min_interval, max_stale):
+    async def __call__(self, key, url, min_interval, max_stale, timeout=None):
         self.calls.append(key)
+        self.timeouts[key] = timeout
         value = self.responses.get(key)
         if value is None:
             return FetchResult(None, STATE_ERROR, error="down", failures=1)
@@ -82,6 +84,20 @@ class LayerTests(unittest.TestCase):
         cfg = layers.LayerConfig(autobahn_roads=("A81",))
         items, _ = asyncio.run(layers.fetch_layers(cfg, HOME, 50, fetch))
         self.assertEqual(["Sperrung Tunnel", "DEGES Ausbau"], [i["title"] for i in items])
+
+    def test_radiation_uses_long_timeout_and_wide_radius(self):
+        def station(sid, lon, lat):
+            return {
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {"id": sid, "name": sid, "value": 0.6, "unit": "µSv/h", "site_status": 1},
+            }
+
+        # ~60 km from Stuttgart (inside 100 km) and ~400 km away (outside)
+        payload = {"features": [station("nah", 9.2, 49.3), station("fern", 13.4, 52.5)]}
+        fetch = FakeFetch({"layer:odl": payload})
+        items, _ = asyncio.run(layers.fetch_layers(layers.LayerConfig(radiation=True), HOME, 25, fetch))
+        self.assertEqual(["odl:nah"], [i["key"] for i in items])
+        self.assertEqual(60, fetch.timeouts["layer:odl"])
 
     def test_one_failing_layer_does_not_break_others(self):
         odl = {

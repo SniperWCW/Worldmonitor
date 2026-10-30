@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 - 2026-10-30
+
+### Fixed
+
+- Radiation layer: the server-side filter added in 0.3.2 made the BfS service answer with a non-JSON error. The filter is removed again; the full station list is fetched with a 60 s timeout and filtered locally.
+- The radiation layer now only shows stations within 100 km of Home (or the local radius if that is larger).
+- A response that is not JSON now reports the start of the body in the source status instead of a bare `JSONDecodeError`.
+
 ## 0.3.2 - 2026-10-30
 
 ### Fixed

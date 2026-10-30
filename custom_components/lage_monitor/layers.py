@@ -16,7 +16,7 @@ from . import geo
 from .fetchcache import FetchResult
 from .sources import autobahn, bfs, pegel
 
-Fetch = Callable[[str, str, float, float], Awaitable[FetchResult]]
+Fetch = Callable[..., Awaitable[FetchResult]]  # (key, url, min_interval, max_stale, timeout=None)
 
 MAX_WEBCAMS = 40
 MAX_ROAD_ITEMS = 25
@@ -129,9 +129,12 @@ async def _fetch_water(home, radius_km, fetch: Fetch):
     return items, _aggregate_status([result], len(items))
 
 
-async def _fetch_radiation(home, fetch: Fetch):
-    result = await fetch("layer:odl", bfs.ODL_URL, RADIATION_MIN_INTERVAL, LAYER_MAX_STALE)
-    items = bfs.normalize_stations(result.value)[: MAX_RADIATION_ITEMS] if result.value is not None else []
+async def _fetch_radiation(home, radius_km, fetch: Fetch):
+    result = await fetch(
+        "layer:odl", bfs.ODL_URL, RADIATION_MIN_INTERVAL, LAYER_MAX_STALE, timeout=bfs.REQUEST_TIMEOUT_S
+    )
+    items = bfs.normalize_stations(result.value) if result.value is not None else []
+    items = _within(items, home, max(radius_km, bfs.MIN_RADIUS_KM))[:MAX_RADIATION_ITEMS]
     return items, _aggregate_status([result], len(items))
 
 
@@ -154,7 +157,7 @@ async def fetch_layers(
         jobs.append(_fetch_water(home, radius_km, fetch))
     if cfg.radiation:
         names.append("bfs_odl")
-        jobs.append(_fetch_radiation(home, fetch))
+        jobs.append(_fetch_radiation(home, radius_km, fetch))
     outcomes = await asyncio.gather(*jobs, return_exceptions=True)
     items: list[dict] = []
     status: dict[str, dict] = {}
