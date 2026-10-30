@@ -134,6 +134,9 @@ class BfsTests(unittest.TestCase):
         self.assertEqual(["Hoch: 0.45 µSv/h"], [i["title"] for i in items])
         self.assertEqual(48.78, items[0]["latitude"])  # GeoJSON order is lon, lat
 
+    def test_url_filters_on_the_server(self):
+        self.assertIn("cql_filter=value%3E%3D0.3", bfs.ODL_URL)
+
     def test_garbage(self):
         self.assertEqual([], bfs.normalize_stations({"features": [{"properties": None}]}))
 

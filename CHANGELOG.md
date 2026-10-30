@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 - 2026-10-30
+
+### Fixed
+
+- The BfS radiation layer timed out because it downloaded all ~1,600 stations; the dose-rate filter (0.3 uSv/h) is now applied by the server.
+- The Autobahn layer listed every ramp and phase of a large roadworks site separately and included announced future works. It now shows one entry per measure, only currently relevant ones, at most 25.
+
 ## 0.3.1 - 2026-10-30
 
 ### Added

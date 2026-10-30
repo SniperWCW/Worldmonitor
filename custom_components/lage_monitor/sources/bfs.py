@@ -15,6 +15,8 @@ from . import LAYER_RADIATION, first_list, to_float, valid_point
 ODL_URL = (
     "https://www.imis.bfs.de/ogc/opendata/ows?service=WFS&version=1.1.0&request=GetFeature"
     "&typeName=opendata:odlinfo_odl_1h_latest&outputFormat=application/json"
+    # Filter on the server: the full list (~1,600 stations) timed out after 20 s.
+    "&cql_filter=value%3E%3D0.3"
 )
 ELEVATED_USV_H = 0.30  # severity 1
 HIGH_USV_H = 1.00  # severity 2

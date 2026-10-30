@@ -61,6 +61,28 @@ class LayerTests(unittest.TestCase):
         self.assertIn("down", status["autobahn"]["error"])
         self.assertEqual(3, len(fetch.calls))
 
+    def test_traffic_is_deduplicated_and_future_works_dropped(self):
+        def closure(identifier, title, lat, future=False):
+            return {"identifier": identifier, "title": title, "future": future, "coordinate": {"lat": str(lat), "long": "9.0"}}
+
+        fetch = FakeFetch(
+            {
+                "layer:autobahn:A81:webcam": {"webcam": []},
+                "layer:autobahn:A81:closure": {
+                    "closure": [
+                        closure("1", "DEGES Ausbau", 48.70),
+                        closure("2", "DEGES Ausbau", 48.71),  # same measure, other ramp
+                        closure("3", "Sperrung Tunnel", 48.80),
+                        closure("4", "Nächste Woche", 48.79, future=True),
+                    ]
+                },
+                "layer:autobahn:A81:warning": {"warning": []},
+            }
+        )
+        cfg = layers.LayerConfig(autobahn_roads=("A81",))
+        items, _ = asyncio.run(layers.fetch_layers(cfg, HOME, 50, fetch))
+        self.assertEqual(["Sperrung Tunnel", "DEGES Ausbau"], [i["title"] for i in items])
+
     def test_one_failing_layer_does_not_break_others(self):
         odl = {
             "features": [

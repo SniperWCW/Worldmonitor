@@ -19,7 +19,7 @@ from .sources import autobahn, bfs, pegel
 Fetch = Callable[[str, str, float, float], Awaitable[FetchResult]]
 
 MAX_WEBCAMS = 40
-MAX_ROAD_ITEMS = 60
+MAX_ROAD_ITEMS = 25
 MAX_WATER_ITEMS = 25
 MAX_RADIATION_ITEMS = 15
 
@@ -75,6 +75,19 @@ def _within(items: list[dict], home, radius_km: float) -> list[dict]:
     return kept
 
 
+def _dedupe_measures(items: list[dict]) -> list[dict]:
+    """One entry per measure: a large roadworks site is reported once per ramp and phase."""
+    seen: set[tuple[str, str, str]] = set()
+    unique = []
+    for item in items:  # already sorted: the first (most severe, nearest) entry wins
+        key = (item["kind"], item["road"], item["title"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
 async def _fetch_autobahn(cfg, home, radius_km, fetch: Fetch):
     jobs = [(road, kind) for road in cfg.autobahn_roads for kind in ("webcam", "closure", "warning")]
     results = await asyncio.gather(
@@ -99,7 +112,9 @@ async def _fetch_autobahn(cfg, home, radius_km, fetch: Fetch):
             traffic.extend(autobahn.normalize_traffic(result.value, road, kind))
     cams = sorted(_within(cams, home, radius_km), key=lambda i: i.get("distance_km", 0))[:MAX_WEBCAMS]
     traffic = _within(traffic, home, radius_km * 2)
+    traffic = [i for i in traffic if i["severity"] > 0]  # announced future works are noise
     traffic.sort(key=lambda i: (-i["severity"], i.get("distance_km", 0)))
+    traffic = _dedupe_measures(traffic)
     items = cams + traffic[:MAX_ROAD_ITEMS]
     return items, _aggregate_status(list(results), len(items))
 

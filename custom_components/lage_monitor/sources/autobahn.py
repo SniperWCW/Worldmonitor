@@ -91,7 +91,7 @@ def normalize_traffic(payload: Any, road: str, kind: str) -> list[dict]:
                 "key": f"{kind}:{raw.get('identifier') or (lat, lon, title)}",
                 "title": title,
                 "subtitle": _text(raw.get("subtitle")),
-                "detail": _text(raw.get("description"))[:300],
+                "detail": _text(raw.get("description"))[:200],
                 "kind": kind,
                 "road": road,
                 "latitude": lat,
